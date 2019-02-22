@@ -1,0 +1,51 @@
+---
+
+# base variables
+host_purpose: driverdash-invite
+host_environment: stage
+owning_group: mobile
+
+# splunk variables
+splunk_rpm_url: "s3://wex-mobile-devops/installers/splunk/splunkforwarder-7.2.0-8c86330ac18-linux-2.6-x86_64.rpm"
+splunk_mgmt_port: 6089
+
+# trendmicro variables
+trendmicro_provider: saas
+trendmicro_url: s3://wex-mobile-devops/installers/trendmicro/TrendMicro-Agent-amzn1-10.1.0-356.x86_64.rpm
+trendmicro_dsm_url: dsm://agents.deepsecurity.trendmicro.com:443/
+trendmicro_policy_id: 201
+trendmicro_tenant_id: "{{host_environment}}.trendmicro.tenant-id"
+trendmicro_token: "{{host_environment}}.trendmicro.token"
+
+# sumologic variables
+sumologic_rpm_url: s3://wex-mobile-devops/installers/sumologic/SumoCollector-19.227-15.x86_64.rpm
+sumologic_access_id_param: "{{host_environment}}.sumologic.accessid"
+sumologic_access_key_param: "{{host_environment}}.sumologic.accesskey"
+sumologic_client_name: "{{host_purpose}}-{{host_environment}}"
+
+sumologic_sources:
+  bootstrap_source:
+    name: bootstrap
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/bootstrap"
+    pathExpression: "/var/log/bootstrap.log"
+  ansible_source:
+    name: ansible
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/ansible"
+    pathExpression: "/var/log/ansible.log"
+  app_source:
+    name: app
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/app"
+    pathExpression: "/var/log/{{host_purpose}}/app.log"
+
+# jdk variables
+jdk_rpm_url: "s3://wex-mobile-devops/installers/jdk/jdk-8u151-linux-x64.rpm"
+
+# nexus artifact variables
+nexus_artifacts:
+  driverdash-invite:
+    version_env_var: "APP_VERSION"
+    group: "com.wex"
+    artifact: "driverdash-invite"
+    downloaded_location: "/root/app.jar"
+
+# dynamic spring properties

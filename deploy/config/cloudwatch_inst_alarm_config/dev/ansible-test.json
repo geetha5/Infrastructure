@@ -1,0 +1,30 @@
+{
+  "Alarms": [
+    {
+      "Name": "memory",
+      "Enabled": true,
+      "MetricName": "mem_used_percent",
+      "Unit": "Percent",
+      "ComparisonOperator": "GreaterThanThreshold",
+      "Threshold": 80.0,
+      "Period": 10,
+      "Namespace": "CWAgent",
+      "EvaluationPeriods": 3,
+      "Statistic": "Maximum",
+      "SnsTopics": [ "arn:aws:sns:us-east-1:518554605247:mobile-dev-vpc-DevopsAlertSns-19ZHSRCSTBKKP" ]
+    },
+    {
+      "Name": "cpu",
+      "Enabled": true,
+      "MetricName": "CPUUtilization",
+      "Unit": "Percent",
+      "ComparisonOperator": "GreaterThanThreshold",
+      "Threshold": 90.0,
+      "Period": 60,
+      "Namespace": "AWS/EC2",
+      "EvaluationPeriods": 1,
+      "Statistic": "Maximum",
+      "SnsTopics": [ "arn:aws:sns:us-east-1:518554605247:mobile-dev-vpc-DevopsAlertSns-19ZHSRCSTBKKP" ]
+    }
+  ]
+}

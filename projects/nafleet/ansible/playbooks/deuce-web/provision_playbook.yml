@@ -1,0 +1,77 @@
+---
+
+- name: DeuceWeb provision master playbook
+  hosts: localhost
+  become: yes
+  become_user: root
+  vars_files:
+    - /etc/ansible/variables.yml
+
+  roles:
+    - base
+    - splunk
+    - sumologic
+    - trendmicro
+    - jdk
+    - tomcat
+
+  post_tasks:
+#  Application Download/Property file
+    - name: Copy Artifact from Artifactory
+      maven_artifact:
+        group_id: com.wex.fleet.web
+        artifact_id: "{{host_purpose}}"
+        version: "{{ lookup('env', 'APP_VERSION') | default('latest', true) }}"
+        extension: war
+#        repository_url: 'https://us-east-1.artifactory.wexapps.com/artifactory/public'
+        repository_url: 'http://nexus.int.wrightexpress.com/nexus/content/groups/public'
+        dest: "{{tomcat_home}}/webapps/online.war"
+    - name: Copy Basic Properties to Tomcat lib dir
+      aws_s3:
+        bucket: "{{devops_bucket}}"
+        object: "/config/{{host_platform}}/{{host_purpose}}/{{host_environment}}/env-web.properties"
+        dest: "{{tomcat_home}}/lib/env-web.properties"
+        mode: get
+    - name: Copy Common Properties to Tomcat lib dir
+      aws_s3:
+        bucket: "{{devops_bucket}}"
+        object: "/config/{{host_platform}}/{{host_purpose}}/{{host_environment}}/env-web-common.properties"
+        dest: "{{tomcat_home}}/lib/env-web-common.properties"
+        mode: get
+    - name: Copy Customized Properties to Tomcat lib dir
+      aws_s3:
+        bucket: "{{devops_bucket}}"
+        object: "/config/{{host_platform}}/{{host_purpose}}/{{host_environment}}/env-web-customizable.properties"
+        dest: "{{tomcat_home}}/lib/env-web-customizable.properties"
+        mode: get
+    - name: start tomcat
+      shell: "{{tomcat_home}}/bin/startup.sh"
+
+# EFS/NFS Mounts
+    - name: Create DeuceService Temp EFS Mount Point
+      file:
+        path: "{{tomcat_home}}/mp_temp"
+        state: directory
+        mode: 0755
+    - name: Ensure DeuceService Temp Data EFS volume is mounted.
+      mount:
+        name: "{{tomcat_home}}/mp_temp"
+        src: "efs-deuce-service-temp.{{host_environment}}-internal.wexfleetweb.com:/"
+        fstype: nfs4
+        opts: nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport
+        state: mounted
+
+# PCI System Reporting
+    - name: Generate PCI System Report
+      shell: ansible_scripts/ec2/system_report.sh
+      args:
+        chdir: /root
+      register: system_report
+      ignore_errors: True
+    - name: Export PCI System Report
+      when: system_report is succeeded
+      aws_s3:
+        bucket: "{{devops_bucket}}"
+        object: "system-reports/{{host_environment}}/{{system_report.stdout}}"
+        src: "/root/{{system_report.stdout}}"
+        mode: put

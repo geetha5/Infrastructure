@@ -1,0 +1,308 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Gas Buddy Kinesis Stack",
+  "Parameters": {
+    "environment": {
+      "Type": "String",
+      "Description": "The environment for the Gas Buddy stack",
+      "Default": "dev"
+    },
+    "kmsStackName": {
+      "Type": "String",
+      "Description": "The stack name of the kms key for gasbuddy for references"
+    },
+    "kinesisShardCount": {
+      "Type": "Number",
+      "Description": "The number of shards for kinesis",
+      "Default": "10" 
+    },
+    "kinesisRetention": {
+      "Type": "Number",
+      "Description": "The number of hours of retention for kinesis",
+      "Default": "24"
+    },
+    "gasBuddyAwsAccountNumber": {
+      "Type": "String",
+      "Description": "The account number for gasbuddy to create the cross account access to output stream"
+    },
+    "devopsBucket": {
+      "Type": "String",
+      "Description": "The DevOps Bucket",
+      "Default": "wex-mobile-devops"
+    },
+    "kinesisEncryptionResourceReleaseType": {
+      "Type": "String",
+      "Description": "Dev or Releases type for the kinesis Encryption Lambda",
+      "Default": "dev",
+      "AllowedValues": [
+        "dev",
+        "releases"
+      ]
+    },
+    "kinesisEncryptionResourceVersion": {
+      "Type": "String",
+      "Description": "The version of the kinesis encryption cf resource lambda to use"
+    }
+  },
+  "Conditions": {
+    "DisableGasbuddy": { "Fn::Equals": [ { "Ref": "gasBuddyAwsAccountNumber" }, "no-gasbuddy" ] },
+    "EnableGasbuddyAccess": { "Fn::Not": [ { "Fn::Or": [
+      { "Fn::Equals": [ { "Ref": "gasBuddyAwsAccountNumber" }, "stream-only" ] },
+      { "Fn::Equals": [ { "Ref": "gasBuddyAwsAccountNumber" }, "no-gasbuddy" ] } ] } ] },
+    "EnableGasbuddyStream": { "Fn::Not": [ { "Fn::Equals": [ { "Ref": "gasBuddyAwsAccountNumber" }, "no-gasbuddy" ] } ] }
+  },
+  "Resources": {
+    "KinesisEncryptionResourceIAM": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "lambda.amazonaws.com"
+                ]
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "CloudwatchLogs-RW",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": "arn:aws:logs:*:*:*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "Kinesis-Perms",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "kinesis:List*",
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "kinesis:Describe*",
+                    "kinesis:StartStreamEncryption",
+                    "kinesis:StopStreamEncryption"
+                  ],
+                  "Resource": [
+                    { "Fn::If": [ "EnableGasbuddyStream", { "Fn::GetAtt": [ "GBOutputKinesis", "Arn" ] }, { "Ref": "AWS::NoValue" } ] },
+                    { "Fn::GetAtt": [ "AuthKinesis", "Arn" ] }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "Kms-Perms",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "kms:List*",
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "kms:Describe*",
+                    "kms:Encrypt",
+                    "kms:Decrypt",
+                    "kms:GenerateDataKey"
+                  ],
+                  "Resource": [
+                    { "Fn::ImportValue": { "Fn::Sub": "${kmsStackName}-AuthStreamKmsKey-Arn" } },
+                    { "Fn::If": [ "EnableGasbuddyStream", { "Fn::ImportValue": { "Fn::Sub": "${kmsStackName}-GasBuddyStreamKmsKey-Arn" } }, { "Ref": "AWS::NoValue" } ] }
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "KinesisEncryptionLambda": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Code": {
+          "S3Bucket": { "Ref": "devopsBucket" },
+          "S3Key": { "Fn::Join": [ "", [
+            "cf_resources/kinesis_encryption/",
+            { "Ref": "kinesisEncryptionResourceReleaseType" },
+            "/",
+            { "Ref": "kinesisEncryptionResourceVersion" },
+            "/kinesis_encryption",
+            ".zip"
+          ] ] }
+        },
+        "Handler": "kinesis_encryption.handler",
+        "MemorySize": 128,
+        "Runtime": "python2.7",
+        "Role": { "Fn::GetAtt": [ "KinesisEncryptionResourceIAM", "Arn" ] }
+      }
+    },
+    "AuthKinesis": {
+      "Type": "AWS::Kinesis::Stream",
+      "Properties": {
+        "Name": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "WEX-Auth-Stream" ] ] },
+        "ShardCount": { "Ref": "kinesisShardCount" },
+        "RetentionPeriodHours": { "Ref": "kinesisRetention" },
+        "Tags": [
+          { "Key": "Purpose", "Value": "WEXAuthStream" },
+          { "Key": "Environment", "Value": { "Ref": "environment" } }
+        ]
+      }
+    },
+    "AuthKinesisEncrypt": {
+      "Type": "Custom::KinesisEncryption",
+      "Properties": {
+        "ServiceToken": { "Fn::GetAtt": [ "KinesisEncryptionLambda", "Arn" ] },
+        "KmsKeyId": { "Fn::ImportValue": { "Fn::Sub": "${kmsStackName}-AuthStreamKmsKey-Id" } },
+        "KinesisStreamName": { "Ref": "AuthKinesis" },
+        "DesiredState": "encrypted"
+      }
+    },
+    "GBOutputKinesis": {
+      "Type": "AWS::Kinesis::Stream",
+      "Properties": {
+        "Name": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "Gas-Buddy-Output-Stream" ] ] },
+        "ShardCount": { "Ref": "kinesisShardCount" },
+        "RetentionPeriodHours": { "Ref": "kinesisRetention" },
+        "Tags": [
+          { "Key": "Purpose", "Value": "GasBuddy" },
+          { "Key": "Environment", "Value": { "Ref": "environment" } }
+        ]
+      },
+      "Condition": "EnableGasbuddyStream"
+    },
+    "GbOutputKinesisEncrypt": {
+      "Type": "Custom::KinesisEncryption",
+      "Properties": {
+        "ServiceToken": { "Fn::GetAtt": [ "KinesisEncryptionLambda", "Arn" ] },
+        "KmsKeyId": { "Fn::ImportValue": { "Fn::Sub": "${kmsStackName}-GasBuddyStreamKmsKey-Id" } },
+        "KinesisStreamName": { "Ref": "GBOutputKinesis" },
+        "DesiredState": "encrypted"
+      },
+      "Condition": "EnableGasbuddyStream"
+    },
+    "GasBuddyCrossAccountOutputRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "RoleName": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "gasbuddy-output-role" ] ] },
+        "Path": "/",
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": { "Fn::Join": [ "", [ "arn:aws:iam::", { "Ref": "gasBuddyAwsAccountNumber" }, ":root" ] ] }
+            },
+            "Action": "sts:AssumeRole"
+          }]
+        },
+        "Policies": [
+          {
+            "PolicyName": "AllKinesisStreamList",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "kinesis:List*",
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "GBOutputStream-Get",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "kms:Decrypt",
+                  "Resource": { "Fn::ImportValue": { "Fn::Sub": "${kmsStackName}-GasBuddyStreamKmsKey-Arn" } }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "kinesis:Get*",
+                    "kinesis:Describe*"
+                  ],
+                  "Resource": { "Fn::GetAtt": [ "GBOutputKinesis", "Arn" ] }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      "Condition": "EnableGasbuddyAccess"
+    }
+  },
+  "Outputs": {
+    "GBOutputRoleName": {
+      "Description": "The Name for the Gasbuddy output role",
+      "Value": { "Fn::If": [ "EnableGasbuddyAccess", { "Ref": "GasBuddyCrossAccountOutputRole" }, "N/A" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-Gasbuddy-OutputRole-Name" }
+      }
+    },
+    "GBOutputRoleArn": {
+      "Description": "The Arn for the Gasbuddy output role",
+      "Value": { "Fn::If": [ "EnableGasbuddyAccess", { "Fn::GetAtt": [ "GasBuddyCrossAccountOutputRole", "Arn" ] }, "N/A" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-Gasbuddy-OutputRole-Arn" }
+      }
+    },
+    "AuthStreamArn": {
+      "Description": "The Arn for the Auth Kinesis Stream",
+      "Value": { "Fn::GetAtt": [ "AuthKinesis", "Arn" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-AuthStream-Arn" }
+      }
+    },
+    "AuthStreamName": {
+      "Description": "The Name for the Auth Kinesis Stream",
+      "Value": { "Ref": "AuthKinesis" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-AuthStream-Name" }
+      }
+    },
+    "GBOutputStreamArn": {
+      "Description": "The Arn for the GasBuddy Output Kinesis Stream",
+      "Value": { "Fn::If": [ "EnableGasbuddyStream", { "Fn::GetAtt": [ "GBOutputKinesis", "Arn" ] }, "N/A" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-GBOutputStream-Arn" } 
+      }
+    },
+    "GBOutputStreamName": {
+      "Description": "The Name for the GasBuddy Output Kinesis Stream",
+      "Value": { "Fn::If": [ "EnableGasbuddyStream", { "Ref": "GBOutputKinesis" }, "N/A" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-GBOutputStream-Name" }
+      }
+    }
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "agent": {
+    "metrics_collection_interval": 10,
+    "logfile": "/opt/aws/amazon-cloudwatch-agent/logs/amazon-cloudwatch-agent.log"
+  },
+  "metrics": {
+    "metrics_collected": {
+      "cpu": {
+        "resources": [
+          "*"
+        ],
+        "measurement": [
+          "cpu_usage_user",
+          "cpu_usage_system",
+          "cpu_usage_guest"
+        ],
+        "totalcpu": true,
+        "metrics_collection_interval": 1
+      },
+      "disk": {
+        "resources": [
+          "/"
+        ],
+        "measurement": [
+          {"name": "used", "rename": "disk_used_gb", "unit": "Gigabytes"},
+          {"name": "free", "rename": "disk_free_gb", "unit": "Gigabytes"},
+          {"name": "total", "rename": "disk_total_gb", "unit": "Gigabytes"},
+          {"name": "used_percent", "rename": "disk_used_percent", "unit": "Percent" }
+        ],
+        "metrics_collection_interval": 60
+      },
+      "mem": {
+        "measurement": [
+          {"name": "mem_used_percent", "unit": "Percent" }, 
+          "mem_cached"
+        ],
+        "metrics_collection_interval": 1
+      }
+    },
+    "append_dimensions": {
+      "InstanceId": "${aws:InstanceId}"
+    }
+  }
+}

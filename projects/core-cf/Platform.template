@@ -1,0 +1,100 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Base Platform Bootstrapping",
+
+  "Parameters": {
+    "accountStackName": {
+      "Type": "String",
+      "Description": "parent stack name"
+    },
+    "platform": {
+      "Type": "String",
+      "Description": "Platform Name, e.g. millennium or salesforce"
+    },
+    "envType": {
+      "Type": "String",
+      "Description": "designated environment type",
+      "Default": "dev",
+      "AllowedValues": ["dev", "stage", "prod"]
+    },
+    "vpc": {
+      "Type": "AWS::EC2::VPC::Id",
+      "Description": "VPC to create resources under"
+    },
+    "topLevelDomain": {
+      "Type": "String",
+      "Description": "parent dns record",
+      "Default": "wexfleetweb.com"
+    },
+    "deploymentId": {
+      "Type": "String",
+      "Description": "The unique ID for the deployment"
+    }
+  },
+
+  "Resources": {
+    "HostedZoneExternal": {
+      "Type": "AWS::Route53::HostedZone",
+      "Properties": {
+        "Name": {"Fn::Sub": "${envType}.${topLevelDomain}."},
+        "HostedZoneConfig": {"Comment": "External parent DNS for resources within this Platform/Account"}
+      }
+    },
+    "HostedZoneInternal": {
+      "Type": "AWS::Route53::HostedZone",
+      "Properties": {
+        "Name": {"Fn::Sub": "${envType}-internal.${topLevelDomain}."},
+        "HostedZoneConfig": {"Comment": "Internal parent DNS for resources within this account"},
+        "VPCs": [
+          {"VPCId": {"Ref": "vpc"}, "VPCRegion": {"Ref": "AWS::Region"}}
+        ]
+      }
+    }
+  },
+
+  "Outputs": {
+    "OutputHostedZoneExternalId": {
+      "Description": "Delegate Hosted Zone for Platform",
+      "Value": {"Ref": "HostedZoneExternal"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-HostedZoneExternal-Id"}}
+    },
+    "OutputHostedZoneExternalDomain": {
+      "Description": "External parent DNS Id for resources within this account",
+      "Value": {"Fn::Sub": "${envType}.${topLevelDomain}"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-HostedZoneExternal-Domain"}}
+    },
+    "OutputHostedZoneInternalId": {
+      "Description": "Internal parent DNS Id for resources within this account",
+      "Value": {"Ref": "HostedZoneInternal"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-HostedZoneInternal-Id"}}
+    },
+    "OutputHostedZoneInternalDomain": {
+      "Description": "Delegate Hosted Zone for Account",
+      "Value": {"Fn::Sub": "${envType}-internal.${topLevelDomain}"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-HostedZoneInternal-Domain"}}
+    },
+    "OutputHttpsCertValidationDomain": {
+      "Description": "Environment Type",
+      "Value": {"Ref": "topLevelDomain"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-HttpsCert-ValidationDomain"}}
+    },
+
+    "OutputAccountStack": {
+      "Description": "Stack to Import Account Resources From",
+      "Value": {"Ref": "accountStackName"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-accountStack"}}
+    },
+
+    "OutputPlatformName": {
+      "Description": "Stack to Import Account Resources From",
+      "Value": {"Ref": "platform"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-platform"}}
+    },
+
+    "OutputResourcePrefix": {
+      "Description": "prefix string for resources within this platform",
+      "Value": {"Fn::Sub": "${platform}-${envType}"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-resource-prefix"}}
+    }
+  }
+}

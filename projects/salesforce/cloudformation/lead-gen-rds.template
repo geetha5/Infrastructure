@@ -1,0 +1,286 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "SalesForce Lead Generator Mobile Service",
+
+  "Parameters": {
+    "envType": {
+      "Type": "String",
+      "Description": "designated environment type",
+      "Default": "dev",
+      "AllowedValues": ["dev", "stage", "prod"]
+    },
+    "accountStackName":{
+      "Type": "String",
+      "Description": "account stack name"
+    },
+    "platformStackName": {
+      "Type": "String",
+      "Description": "parent stack name"
+    },
+    "platformInstanceStackName": {
+      "Type": "String",
+      "Description": "instance stack name"
+    }
+  },
+
+  "Resources": {
+    "RDSDBClusterParameterGroup": {
+      "Type": "AWS::RDS::DBClusterParameterGroup",
+      "Properties": {
+        "Description": "SalesForce Lead Gen RDS",
+        "Family": "aurora5.6",
+        "Parameters": {
+          "time_zone": "US/Eastern"
+        },
+        "Tags": [
+          {"Key": "Name", "Value": {"Fn::Sub": ["${platform} - SalesForce - Serverless", {"platform": {"Fn::ImportValue": {"Fn::Sub": "${platformStackName}-platform"}}}]}}
+        ]
+      }
+    },
+
+    "SecretRdsCitgoUser": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Description": "RDS app user credentials for citgo",
+      "Properties": {
+        "Name": {"Fn::Sub": ["${envType}/${platform}/citgo/RDS", {"platform": {"Fn::ImportValue": {"Fn::Sub": "${platformStackName}-platform"}}}]},
+        "KmsKeyId": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-Secret-KmsKey-Alias"}},
+        "Description": "App User for Citgo",
+        "GenerateSecretString": {
+          "SecretStringTemplate": "{\"username\":\"sf_citgo\"}",
+          "GenerateStringKey": "password",
+          "PasswordLength": 16,
+          "ExcludePunctuation": true
+        }
+      }
+    },
+    "RdsClusterCitgo": {
+      "Type": "AWS::RDS::DBCluster",
+      "Properties": {
+        "MasterUsername": {"Fn::Sub": "{{resolve:secretsmanager:${SecretRdsCitgoUser}:SecretString:username}}"},
+        "MasterUserPassword": {"Fn::Sub": "{{resolve:secretsmanager:${SecretRdsCitgoUser}:SecretString:password}}"},
+        "Engine": "aurora",
+        "EngineMode": "serverless",
+        "DatabaseName": "lead_gen_citgo",
+        "DBSubnetGroupName": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-SubnetGroupRds"}},
+        "DBClusterParameterGroupName": {"Ref": "RDSDBClusterParameterGroup"},
+        "DBClusterIdentifier": {"Fn::Sub": ["${prefix}-rds-citgo-cluster", {"prefix": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-resource-prefix"}}}]},
+        "StorageEncrypted": true,
+        "KmsKeyId": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-RDS-KmsKey-Alias"}},
+        "BackupRetentionPeriod": 7,
+        "VpcSecurityGroupIds": [{"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-SecGrpRdsInstance-Id"}}],
+        "ScalingConfiguration": {
+          "AutoPause": true,
+          "MaxCapacity": 16,
+          "MinCapacity": 2,
+          "SecondsUntilAutoPause": 3600
+        }
+      }
+    },
+    "SecretRdsCitgoAttachment": {
+      "Type": "AWS::SecretsManager::SecretTargetAttachment",
+      "Description": "Add RDS connection details to credentials for Citgo",
+      "Properties": {
+        "SecretId": {"Ref": "SecretRdsCitgoUser"},
+        "TargetId": {"Ref":  "RdsClusterCitgo"},
+        "TargetType": "AWS::RDS::DBCluster"
+      },
+      "DependsOn": ["SecretRdsCitgoUser", "RdsClusterCitgo"]
+    },
+
+    "SecretRdsEssoUser": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Description": "RDS user credentials for Esso",
+      "Properties": {
+        "Name": {"Fn::Sub": ["${envType}/${platform}/esso/RDS", {"platform": {"Fn::ImportValue": {"Fn::Sub": "${platformStackName}-platform"}}}]},
+        "KmsKeyId": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-Secret-KmsKey-Alias"}},
+        "Description": "RDS User for Esso",
+        "GenerateSecretString": {
+          "SecretStringTemplate": "{\"username\":\"sf_esso\"}",
+          "GenerateStringKey": "password",
+          "PasswordLength": 16,
+          "ExcludePunctuation": true
+        }
+      }
+    },
+    "RdsClusterEsso": {
+      "Type": "AWS::RDS::DBCluster",
+      "Properties": {
+        "MasterUsername": {"Fn::Sub": "{{resolve:secretsmanager:${SecretRdsEssoUser}:SecretString:username}}"},
+        "MasterUserPassword": {"Fn::Sub": "{{resolve:secretsmanager:${SecretRdsEssoUser}:SecretString:password}}"},
+        "Engine": "aurora",
+        "EngineMode": "serverless",
+        "DatabaseName": "lead_gen_esso",
+        "DBSubnetGroupName": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-SubnetGroupRds"}},
+        "DBClusterParameterGroupName": {"Ref": "RDSDBClusterParameterGroup"},
+        "DBClusterIdentifier": {"Fn::Sub": ["${prefix}-rds-esso-cluster", {"prefix": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-resource-prefix"}}}]},
+        "StorageEncrypted": true,
+        "KmsKeyId": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-RDS-KmsKey-Alias"}},
+        "BackupRetentionPeriod": 7,
+        "VpcSecurityGroupIds": [{"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-SecGrpRdsInstance-Id"}}],
+        "ScalingConfiguration": {
+          "AutoPause": true,
+          "MaxCapacity": 16,
+          "MinCapacity": 2,
+          "SecondsUntilAutoPause": 3600
+        }
+      }
+    },
+    "SecretRdsEssoAttachment": {
+      "Type": "AWS::SecretsManager::SecretTargetAttachment",
+      "Description": "Add RDS connection details to credentials for Esso",
+      "Properties": {
+        "SecretId": {"Ref": "SecretRdsEssoUser"},
+        "TargetId": {"Ref":  "RdsClusterEsso"},
+        "TargetType": "AWS::RDS::DBCluster"
+      },
+      "DependsOn": ["SecretRdsEssoUser", "RdsClusterEsso"]
+    },
+
+    "SecretRdsExxonUser": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Description": "RDS app user credentials for Exxon",
+      "Properties": {
+        "Name": {"Fn::Sub": ["${envType}/${platform}/exxon/RDS", {"platform": {"Fn::ImportValue": {"Fn::Sub": "${platformStackName}-platform"}}}]},
+        "KmsKeyId": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-Secret-KmsKey-Alias"}},
+        "Description": "App User for Exxon",
+        "GenerateSecretString": {
+          "SecretStringTemplate": "{\"username\":\"sf_exxon\"}",
+          "GenerateStringKey": "password",
+          "PasswordLength": 16,
+          "ExcludePunctuation": true
+        }
+      }
+    },
+    "RdsClusterExxon": {
+      "Type": "AWS::RDS::DBCluster",
+      "Properties": {
+        "MasterUsername": {"Fn::Sub": "{{resolve:secretsmanager:${SecretRdsExxonUser}:SecretString:username}}"},
+        "MasterUserPassword": {"Fn::Sub": "{{resolve:secretsmanager:${SecretRdsExxonUser}:SecretString:password}}"},
+        "Engine": "aurora",
+        "EngineMode": "serverless",
+        "DatabaseName": "lead_gen_exxon",
+        "DBSubnetGroupName": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-SubnetGroupRds"}},
+        "DBClusterParameterGroupName": {"Ref": "RDSDBClusterParameterGroup"},
+        "DBClusterIdentifier": {"Fn::Sub": ["${prefix}-rds-exxon-cluster", {"prefix": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-resource-prefix"}}}]},
+        "KmsKeyId": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-RDS-KmsKey-Alias"}},
+        "StorageEncrypted": true,
+        "BackupRetentionPeriod": 7,
+        "VpcSecurityGroupIds": [{"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-SecGrpRdsInstance-Id"}}],
+        "ScalingConfiguration": {
+          "AutoPause": true,
+          "MaxCapacity": 16,
+          "MinCapacity": 2,
+          "SecondsUntilAutoPause": 3600
+        }
+      }
+    },
+    "SecretRdsExxonAttachment": {
+      "Type": "AWS::SecretsManager::SecretTargetAttachment",
+      "Description": "Add RDS connection details to credentials for Exxon",
+      "Properties": {
+        "SecretId": {"Ref": "SecretRdsExxonUser"},
+        "TargetId": {"Ref":  "RdsClusterExxon"},
+        "TargetType": "AWS::RDS::DBCluster"
+      },
+      "DependsOn": ["SecretRdsExxonUser", "RdsClusterExxon"]
+    },
+
+    "SecretRdsSpeedwayUser": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Description": "RDS app user credentials for Speedway",
+      "Properties": {
+        "Name": {"Fn::Sub": ["${envType}/${platform}/speedway/RDS", {"platform": {"Fn::ImportValue": {"Fn::Sub": "${platformStackName}-platform"}}}]},
+        "KmsKeyId": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-Secret-KmsKey-Alias"}},
+        "Description": "App User for Speedway",
+        "GenerateSecretString": {
+          "SecretStringTemplate": "{\"username\":\"sf_speedway\"}",
+          "GenerateStringKey": "password",
+          "PasswordLength": 16,
+          "ExcludePunctuation": true
+        }
+      }
+    },
+    "RdsClusterSpeedway": {
+      "Type": "AWS::RDS::DBCluster",
+      "Properties": {
+        "MasterUsername": {"Fn::Sub": "{{resolve:secretsmanager:${SecretRdsSpeedwayUser}:SecretString:username}}"},
+        "MasterUserPassword": {"Fn::Sub": "{{resolve:secretsmanager:${SecretRdsSpeedwayUser}:SecretString:password}}"},
+        "Engine": "aurora",
+        "EngineMode": "serverless",
+        "DatabaseName": "lead_gen_speedway",
+        "DBSubnetGroupName": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-SubnetGroupRds"}},
+        "DBClusterParameterGroupName": {"Ref": "RDSDBClusterParameterGroup"},
+        "DBClusterIdentifier": {"Fn::Sub": ["${prefix}-rds-speedway-cluster", {"prefix": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-resource-prefix"}}}]},
+        "KmsKeyId": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-RDS-KmsKey-Alias"}},
+        "StorageEncrypted": true,
+        "BackupRetentionPeriod": 7,
+        "VpcSecurityGroupIds": [{"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-SecGrpRdsInstance-Id"}}],
+        "ScalingConfiguration": {
+          "AutoPause": true,
+          "MaxCapacity": 16,
+          "MinCapacity": 2,
+          "SecondsUntilAutoPause": 3600
+        }
+      }
+    },
+    "SecretRdsSpeedwayAttachment": {
+      "Type": "AWS::SecretsManager::SecretTargetAttachment",
+      "Description": "Add RDS connection details to credentials for Speedway",
+      "Properties": {
+        "SecretId": {"Ref": "SecretRdsSpeedwayUser"},
+        "TargetId": {"Ref":  "RdsClusterSpeedway"},
+        "TargetType": "AWS::RDS::DBCluster"
+      },
+      "DependsOn": ["SecretRdsSpeedwayUser", "RdsClusterSpeedway"]
+    },
+
+    "SecretRdsSunocoUser": {
+      "Type": "AWS::SecretsManager::Secret",
+      "Description": "RDS app user credentials for Sunoco",
+      "Properties": {
+        "Name": {"Fn::Sub": ["${envType}/${platform}/sunoco/RDS", {"platform": {"Fn::ImportValue": {"Fn::Sub": "${platformStackName}-platform"}}}]},
+        "KmsKeyId": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-Secret-KmsKey-Alias"}},
+        "Description": "App User for Sunoco",
+        "GenerateSecretString": {
+          "SecretStringTemplate": "{\"username\":\"sf_sunoco\"}",
+          "GenerateStringKey": "password",
+          "PasswordLength": 16,
+          "ExcludePunctuation": true
+        }
+      }
+    },
+    "RdsClusterSunoco": {
+      "Type": "AWS::RDS::DBCluster",
+      "Properties": {
+        "MasterUsername": {"Fn::Sub": "{{resolve:secretsmanager:${SecretRdsSunocoUser}:SecretString:username}}"},
+        "MasterUserPassword": {"Fn::Sub": "{{resolve:secretsmanager:${SecretRdsSunocoUser}:SecretString:password}}"},
+        "Engine": "aurora",
+        "EngineMode": "serverless",
+        "DatabaseName": "lead_gen_sunoco",
+        "DBSubnetGroupName": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-SubnetGroupRds"}},
+        "DBClusterParameterGroupName": {"Ref": "RDSDBClusterParameterGroup"},
+        "DBClusterIdentifier": {"Fn::Sub": ["${prefix}-rds-sunoco-cluster", {"prefix": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-resource-prefix"}}}]},
+        "KmsKeyId": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-RDS-KmsKey-Alias"}},
+        "StorageEncrypted": true,
+        "BackupRetentionPeriod": 7,
+        "VpcSecurityGroupIds": [{"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-SecGrpRdsInstance-Id"}}],
+        "ScalingConfiguration": {
+          "AutoPause": true,
+          "MaxCapacity": 16,
+          "MinCapacity": 2,
+          "SecondsUntilAutoPause": 3600
+        }
+      }
+    },
+    "SecretRdsSunocoAttachment": {
+      "Type": "AWS::SecretsManager::SecretTargetAttachment",
+      "Description": "Add RDS connection details to credentials for Sunoco",
+      "Properties": {
+        "SecretId": {"Ref": "SecretRdsSunocoUser"},
+        "TargetId": {"Ref":  "RdsClusterSunoco"},
+        "TargetType": "AWS::RDS::DBCluster"
+      },
+      "DependsOn": ["SecretRdsSunocoUser", "RdsClusterSunoco"]
+    }
+  }
+}

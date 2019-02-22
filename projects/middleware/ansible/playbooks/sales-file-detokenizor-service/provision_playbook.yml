@@ -1,0 +1,30 @@
+---
+
+- name: Sales File Detokenizor provision master playbook
+  hosts: localhost
+  become: yes
+  become_user: root
+  vars_files:
+    - /etc/ansible/variables.yml
+
+  roles:
+    - base
+    - chrony
+    - sumologic
+    - splunk
+    - trendmicro
+
+  post_tasks:
+    - name: Generate PCI System Report
+      shell: ansible_scripts/ec2/system_report.sh
+      args:
+        chdir: /root
+      register: system_report
+
+    - name: Export PCI System Report
+      when: system_report is succeeded
+      aws_s3:
+        bucket: "{{devops_bucket}}"
+        object: "system-reports/{{host_environment}}/{{system_report.stdout}}"
+        src: "/root/{{system_report.stdout}}"
+        mode: put

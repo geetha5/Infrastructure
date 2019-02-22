@@ -1,0 +1,278 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Mobile Gateway ALB Common Stack",
+  "Parameters": {
+    "environment": {
+      "Description": "The environment of the stack",
+      "Type": "String",
+      "Default": "dev"
+    },
+    "vpcStackName": {
+      "Description": "The cloudformation stack name for the vpc",
+      "Type": "String"
+    },
+    "elbLogStackName": {
+      "Description": "The cloudformation stack name for the elb logging stack",
+      "Type": "String"
+    },
+    "externalClientAcmCertArn": {
+      "Description": "The ACM cert arn for the external client ALB",
+      "Type": "String"
+    }
+  },
+  "Resources": {
+    "InternalServiceAdminAccessAlbSg": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupName": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "mg-internal-service-admin-access-ALB-SG" ] ] },
+        "GroupDescription": { "Fn::Join": [ " ", [ { "Ref": "environment" }, "Mobile Gateway Internal Service Admin Access ALB SG" ] ] },
+        "VpcId": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-Vpc-Id" } }
+      }
+    },
+    "InternalAdminConsoleAlbSg": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupName": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "mg-internal-admin-console-ALB-SG" ] ] },
+        "GroupDescription": { "Fn::Join": [ " ", [ { "Ref": "environment" }, "Mobile Gateway Internal Admin Console ALB SG" ] ] },
+        "VpcId": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-Vpc-Id" } },
+        "SecurityGroupIngress": [
+          {
+            "CidrIp": "10.79.0.0/8",
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443
+          },
+          {
+            "CidrIp": "10.78.0.0/8",
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443
+          }
+        ]
+      }
+    },
+    "ExternalClientAlbSg": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupName": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "mg-external-client-ALB-SG" ] ] },
+        "GroupDescription": { "Fn::Join": [ " ", [ { "Ref": "environment" }, "Mobile Gateway External Client ALB SG" ] ] },
+        "VpcId": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-Vpc-Id" } },
+        "SecurityGroupIngress": [
+          {
+            "CidrIp": "0.0.0.0/0",
+            "IpProtocol": "tcp",
+            "FromPort": 443,
+            "ToPort": 443
+          }
+        ]
+      }
+    },
+    "InternalServiceAdminAccessAlb": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "Properties": {
+        "Name": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "mg-admin-access-INT-ALB"] ] },
+        "Type": "application",
+        "Scheme": "internal",
+        "SecurityGroups": [ { "Ref": "InternalServiceAdminAccessAlbSg" } ],
+        "LoadBalancerAttributes": [
+          {
+            "Key": "access_logs.s3.enabled",
+            "Value": "true"
+          },
+          {
+            "Key": "access_logs.s3.bucket",
+            "Value": { "Fn::ImportValue": { "Fn::Sub": "${elbLogStackName}-ElbLogBucket-Name" } }
+          },
+          {
+            "Key": "access_logs.s3.prefix",
+            "Value": "mobile-gateway/internal/admin-service-access-elb-logs"
+          }
+        ],
+        "Subnets": [
+          { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-PrivateSubnetA-Id" } },
+          { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-PrivateSubnetB-Id" } }
+        ],
+        "Tags": [
+          { "Key": "Purpose", "Value": "Admin App Service Access" },
+          { "Key": "Scheme", "Value": "internal" },
+          { "Key": "Environment", "Value": { "Ref": "environment" } }
+        ]
+      }
+    },
+    "InternalAdminConsoleAlb": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "Properties": {
+        "Name": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "mg-admin-console-INT-ALB"] ] },
+        "Type": "application",
+        "Scheme": "internal",
+        "SecurityGroups": [ { "Ref": "InternalAdminConsoleAlbSg" } ],
+        "LoadBalancerAttributes": [
+          {
+            "Key": "access_logs.s3.enabled",
+            "Value": "true"
+          },
+          {
+            "Key": "access_logs.s3.bucket",
+            "Value": { "Fn::ImportValue": { "Fn::Sub": "${elbLogStackName}-ElbLogBucket-Name" } }
+          },
+          {
+            "Key": "access_logs.s3.prefix",
+            "Value": "mobile-gateway/internal/admin-console-elb-logs"
+          }
+        ],
+        "Subnets": [
+          { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-PrivateSubnetA-Id" } },
+          { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-PrivateSubnetB-Id" } }
+        ],
+        "Tags": [
+          { "Key": "Purpose", "Value": "Admin Console Access" },
+          { "Key": "Scheme", "Value": "internal" },
+          { "Key": "Environment", "Value": { "Ref": "environment" } }
+        ]
+      }
+    },
+    "ExternalClientAlb": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "Properties": {
+        "Name": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "mg-client-service-EXT-ALB"] ] },
+        "Type": "application",
+        "Scheme": "internet-facing",
+        "SecurityGroups": [ { "Ref": "ExternalClientAlbSg" } ],
+        "LoadBalancerAttributes": [
+          {
+            "Key": "access_logs.s3.enabled",
+            "Value": "true"
+          },
+          {
+            "Key": "access_logs.s3.bucket",
+            "Value": { "Fn::ImportValue": { "Fn::Sub": "${elbLogStackName}-ElbLogBucket-Name" } }
+          },
+          {
+            "Key": "access_logs.s3.prefix",
+            "Value": "mobile-gateway/external/client-elb-logs"
+          }
+        ],
+        "Subnets": [
+          { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-PublicSubnetA-Id" } },
+          { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-PublicSubnetB-Id" } }
+        ],
+        "Tags": [
+          { "Key": "Purpose", "Value": "External Service Access" },
+          { "Key": "Scheme", "Value": "external" },
+          { "Key": "Environment", "Value": { "Ref": "environment" } }
+        ]
+      }
+    },
+    "ExternalClientDefaultTargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "Name": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "externalClient-default-TG" ] ] },
+        "VpcId": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-Vpc-Id" } },
+        "Port": 80,
+        "Protocol": "HTTP"
+      }
+    },
+    "ExternalClientAlbHttpsListener": {
+      "Type": "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties": {
+        "Certificates": [ { "CertificateArn": { "Ref": "externalClientAcmCertArn" } } ],
+        "DefaultActions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn": { "Ref": "ExternalClientDefaultTargetGroup" }
+          }
+        ],
+        "SslPolicy": "ELBSecurityPolicy-TLS-1-2-2017-01",
+        "LoadBalancerArn": { "Ref": "ExternalClientAlb" },
+        "Port": 443,
+        "Protocol": "HTTPS"
+      }
+    }
+  },
+  "Outputs": {
+    "OutputAdminServiceAccessAlbSgId": {
+      "Description": "The Id of Security group for the Services Admin ALB",
+      "Value": { "Ref": "InternalServiceAdminAccessAlbSg" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-AdminServiceAccessAlbSg-Id" }
+      }
+    },
+    "OutputAdminServiceAccessAlbArn": {
+      "Description": "The Arn of the Admin Services Access ALB",
+      "Value": { "Ref": "InternalServiceAdminAccessAlb" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-AdminServiceAccessAlb-Arn" }
+      }
+    },
+    "OutputAdminServiceAccessAlbDns": {
+      "Description": "The DNS Name of the Admin Services Access ALB",
+      "Value": { "Fn::GetAtt": [ "InternalServiceAdminAccessAlb", "DNSName" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-AdminServiceAccessAlb-Dns" }
+      }
+    },
+    "OutputAdminServiceAccessAlbName": {
+      "Description": "The Name of the Admin Services Access ALB",
+      "Value": { "Fn::GetAtt": [ "InternalServiceAdminAccessAlb", "LoadBalancerName" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-AdminServiceAccessAlb-Name" }
+      }
+    },
+    "OutputAdminConsoleAlbArn": {
+      "Description": "The Arn of the Admin Console ALB",
+      "Value": { "Ref": "InternalAdminConsoleAlb" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-AdminConsoleAlb-Arn" }
+      }
+    },
+    "OutputAdminConsoleAlbDns": {
+      "Description": "The DNS Name of the Admin Console ALB",
+      "Value": { "Fn::GetAtt": [ "InternalAdminConsoleAlb", "DNSName" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-AdminConsoleAlb-Dns" }
+      }
+    },
+    "OutputAdminConsoleAlbName": {
+      "Description": "The Name of the Admin Console ALB",
+      "Value": { "Fn::GetAtt": [ "InternalAdminConsoleAlb", "LoadBalancerName" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-AdminConsoleAlb-Name" }
+      }
+    },
+    "OutputExternalAlbSgId": {
+      "Description": "The Id of Security group for the External Client ALB",
+      "Value": { "Ref": "ExternalClientAlbSg" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ExternalAlbSg-Id" }
+      }
+    },
+    "OutputExternalAlbArn": {
+      "Description": "The Arn of the External Client ALB",
+      "Value": { "Ref": "ExternalClientAlb" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ExternalClientAlb-Arn" }
+      }
+    },
+    "OutputExternalAlbDns": {
+      "Description": "The DNS Name of the External Client ALB",
+      "Value": { "Fn::GetAtt": [ "ExternalClientAlb", "DNSName" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ExternalClientAlb-Dns" }
+      }
+    },
+    "OutputExternalAlbName": {
+      "Description": "The Name of the External Client ALB",
+      "Value": { "Fn::GetAtt": [ "ExternalClientAlb", "LoadBalancerName" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ExternalClientAlb-Name" }
+      }
+    },
+    "OutputExternalAlbListenerHttpsArn": {
+      "Description": "The Arn of the Https listener for external ALB",
+      "Value": { "Ref": "ExternalClientAlbHttpsListener" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ExternalClientHttpsListener-Arn" }
+      }
+    }
+  }
+}

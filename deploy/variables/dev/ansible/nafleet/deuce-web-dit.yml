@@ -1,0 +1,79 @@
+---
+
+# base variables
+host_environment: dit
+host_platform: nafleet
+host_purpose: deuce-web
+owning_group: mwd
+devops_bucket: "wex-mobile-devops"
+
+# splunk variables
+splunk_mgmt_port: 6089
+
+sumologic_sources:
+  cloud_init_source:
+    name: cloud-init
+    category: "{{owning_group}}/{{host_purpose}}/{{host_environment}}/{{ansible_ec2_placement_region}}/cloud-init"
+    pathExpression: "/var/log/cloud-init-output.log"
+  bootstrap_source:
+    name: bootstrap
+    category: "{{owning_group}}/{{host_purpose}}/{{host_environment}}/{{ansible_ec2_placement_region}}/bootstrap"
+    pathExpression: "/var/log/bootstrap.log"
+  ansible_source:
+    name: ansible
+    category: "{{owning_group}}/{{host_purpose}}/{{host_environment}}/{{ansible_ec2_placement_region}}/ansible"
+    pathExpression: "/var/log/ansible.log"
+  localhost_source:
+    name: catalina
+    category: "{{owning_group}}/{{host_purpose}}/{{host_environment}}/{{ansible_ec2_placement_region}}/localhost"
+    pathExpression: "{{tomcat_home}}/logs/localhost.*.log"
+  catalina_source:
+    name: catalina
+    category: "{{owning_group}}/{{host_purpose}}/{{host_environment}}/{{ansible_ec2_placement_region}}/catalina"
+    pathExpression: "{{tomcat_home}}/logs/catalina.out"
+  app_source:
+    name: app
+    category: "{{owning_group}}/{{host_purpose}}/{{host_environment}}/{{ansible_ec2_placement_region}}/app"
+    pathExpression: "{{tomcat_home}}/logs/online.log"
+  cache_source:
+    name: cache
+    category: "{{owning_group}}/{{host_purpose}}/{{host_environment}}/{{ansible_ec2_placement_region}}/cache"
+    pathExpression: "{{tomcat_home}}/logs/online-cache.log"
+  access_source:
+    name: access
+    category: "{{owning_group}}/{{host_purpose}}/{{host_environment}}/{{ansible_ec2_placement_region}}/access"
+    pathExpression: "{{tomcat_home}}/logs/access*.log"
+
+# java version
+jdk_rpm_name: jdk1.8
+
+# tomcat config
+tomcat_conf_contexts:
+  - path: online/
+    jarScan:
+      classPath: false
+      tld: "joda-time-jsp*.jar,jstl-*.jar,spring-webmvc-*.jar,tiles-jsp-*.jar,string-*.jar"
+      default: false
+
+tomcat_setenv:
+  java_opts: >
+    -server
+    -Dserver.port={{tomcat_settings.ports.server}}
+    -Dajp.port={{tomcat_settings.ports.ajp}}
+    -Dssl.port={{tomcat_settings.ports.https}}
+    -Dfile.encoding=UTF-8
+    -Djava.awt.headless=true
+    -Djava.security.egd=file:/dev/./urandom
+    -XX:+UseG1GC
+    -XX:MaxGCPauseMillis=400
+    -XX:G1HeapRegionSize=16m
+    -Dfile.encoding=UTF-8
+    -Duser.timezone=GMT
+    -Djava.util.prefs.PreferencesFactory=com.wex.wol.manager.impl.InMemoryPreferencesManagerImpl
+    -Dspring.profiles.active=$APP_ENV
+    -Dapp.env=$APP_ENV
+  catalina_opts: >
+    -Dcom.sun.management.jmxremote
+    -Dcom.sun.management.jmxremote.port={{tomcat_settings.ports.jmx}}
+    -Dcom.sun.management.jmxremote.authenticate=false
+    -Dcom.sun.management.jmxremote.ssl=false

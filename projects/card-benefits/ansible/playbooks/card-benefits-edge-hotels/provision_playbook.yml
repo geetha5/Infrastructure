@@ -1,0 +1,44 @@
+---
+
+- name: card benefits - edge hotels service - provision master playbook
+  hosts: localhost
+  become: yes
+  become_user: root
+  vars_files:
+    - /etc/ansible/variables.yml
+
+  roles:
+    - base
+    - sumologic
+    - jdk
+    - dynamic_spring_properties
+    - splunk
+    - trendmicro
+
+  pre_tasks:
+    - name: Fetch application artifact from Artifactory
+      maven_artifact:
+        group_id: com.wex.cardbenefits
+        artifact_id: card-benefits-edge-hotels
+        version: "{{ lookup('env', 'APP_VERSION') | default('latest', true) }}"
+        repository_url: 'https://us-east-1.artifactory.wexapps.com/artifactory/public'
+        dest: /root/app.jar
+        mode: 0744
+        owner: root
+        group: root
+      register: application_artifact_installed
+
+  post_tasks:
+    - name: Generate PCI System Report
+      shell: ansible_scripts/ec2/system_report.sh
+      args:
+        chdir: /root
+      register: system_report
+      ignore_errors: True
+    - name: Export PCI System Report
+      when: system_report is succeeded
+      aws_s3:
+        bucket: "{{devops_bucket}}"
+        object: "system-reports/{{host_environment}}/{{system_report.stdout}}"
+        src: "/root/{{system_report.stdout}}"
+        mode: put

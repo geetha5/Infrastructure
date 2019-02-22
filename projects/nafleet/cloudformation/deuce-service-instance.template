@@ -1,0 +1,260 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "MWD - NA Fleet - deuce-service Application",
+
+  "Parameters": {
+    "vpc": {
+      "Type": "AWS::EC2::VPC::Id",
+      "Description": "VPC to create resources under"
+    },
+    "appInfrastructureStackName": {
+      "Type": "String",
+      "Description": "Infrastructure Base stage for DeuceService Instances"
+    },
+    "envType": {
+      "Type": "String",
+      "Description": "designated environment type",
+      "Default": "dev",
+      "AllowedValues": ["dev", "stage", "prod"]
+    },
+    "envInstance": {
+      "Type": "String",
+      "Description": "unique short name for this Platform Instance, e.g. sit, dit",
+      "MinLength": 3,
+      "MaxLength": 10,
+      "AllowedPattern": "^[a-z][a-z0-9\\-]*$",
+      "ConstraintDescription": "Must start with a letter, only contain lower-case letters, '-', and/or numbers"
+    },
+    "platformName": {
+      "Type": "String",
+      "Default": "nafleet"
+    },
+
+    "deploymentId": {
+      "Type": "String",
+      "Description": "The unique ID for the deployment"
+    },
+    "devopsBucket": {
+      "Description": "The bucket for devops related stuff",
+      "Type": "String",
+      "Default": "wex-mobile-devops"
+    },
+
+    "privateSubnets": {
+      "Type": "List<AWS::EC2::Subnet::Id>",
+      "Description": "Private Subnets, should contain either 2 or 3"
+    },
+    "amiId": {
+      "Description": "The Ami id to use for instances",
+      "Type": "String"
+    },
+    "enableSSH": {
+      "Description": "Flag to add ssh key pair and security group to instances",
+      "Type": "String",
+      "Default": "no",
+      "AllowedValues": ["yes", "no"]
+    },
+    "ec2InstanceType": {
+      "Description": "The instance type to use",
+      "Type": "String",
+      "Default": "t3.medium"
+    },
+    "ec2KeyPair": {
+      "Description": "The instance keypair to use, this will only be used if enableSSH is yes, but must be passed",
+      "Type": "AWS::EC2::KeyPair::KeyName",
+      "Default": "mwd-devops"
+    },
+
+    "asgDesiredCount": {
+      "Description": "The number of instances that are desired",
+      "Type": "String",
+      "Default": "2"
+    },
+    "asgMaxCount": {
+      "Description": "The max number of instances that can be in the ASG",
+      "Type": "String",
+      "Default": "4"
+    },
+    "asgMinCount": {
+      "Description": "The min number of instances that can be in the ASG",
+      "Type": "String",
+      "Default": "0"
+    },
+    "asgUpdateBatchSize": {
+      "Description": "The batch size of updates that are run by the ASG when doing a rolling deploy",
+      "Type": "String",
+      "Default": "1"
+    },
+
+    "appName": {
+      "Description": "The application name being deployed",
+      "Type": "String",
+      "Default": "deuce-service"
+    },
+    "appVersion": {
+      "Description": "The version of the java application to deploy",
+      "Type": "String"
+    },
+
+    "ansibleRoleVersion": {
+      "Description": "The version of the ansible roles to deploy",
+      "Type": "String"
+    },
+    "infrastructureVersion": {
+      "Description": "The version of the infrastructure project to deploy",
+      "Type": "String"
+    }
+  },
+
+  "Conditions": {
+    "isSshEnabled": {"Fn::Equals": [{"Ref": "enableSSH"}, "yes"]}
+  },
+
+  "Resources": {
+    "SecGrpIngressSshToEc2InstanceVpnTraffic": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Description": "Ingress rule allow ssh to ec2 instances when SSH is enabled",
+      "Properties": {
+        "IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "CidrIp": "10.78.0.0/15", "Description": "WEX SoPo VPN Traffic",
+        "GroupId": {"Fn::ImportValue": {"Fn::Sub": "${appInfrastructureStackName}-egress-sg"}}
+      },
+      "Condition": "isSshEnabled"
+    },
+    "SecGrpIngressSshToEc2InstanceRemoteAccessTraffic": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Description": "Ingress rule allow ssh to ec2 instances when SSH is enabled",
+      "Properties": {
+        "IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "CidrIp": "10.178.32.0/21", "Description": "WEX remoteaccess VPN Traffic",
+        "GroupId": {"Fn::ImportValue": {"Fn::Sub": "${appInfrastructureStackName}-egress-sg"}}
+      },
+      "Condition": "isSshEnabled"
+    },
+
+    "LaunchConfig": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Description": "Launch Configuration for EC2 Instances",
+      "Properties": {
+        "IamInstanceProfile": {"Fn::ImportValue": {"Fn::Sub": "${appInfrastructureStackName}-iam-instance-profile"}},
+        "ImageId": {"Ref": "amiId"},
+        "InstanceType": {"Ref": "ec2InstanceType"},
+        "SecurityGroups": [{"Fn::ImportValue": {"Fn::Sub": "${appInfrastructureStackName}-egress-sg"}}],
+        "BlockDeviceMappings": [{
+          "DeviceName": "/dev/xvda",
+          "Ebs": {"VolumeSize": "30", "VolumeType": "gp2", "DeleteOnTermination": true}
+        }],
+        "KeyName": {"Fn::If": ["isSshEnabled", {"Ref": "ec2KeyPair"}, {"Ref": "AWS::NoValue"}]},
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash\n",
+                "\n",
+                "# initialization variables\n",
+                "_deploymentId=", {"Ref": "deploymentId"}, "\n",
+                "_stackName=", {"Ref": "AWS::StackName"}, "\n",
+                "_region=", {"Ref": "AWS::Region"}, "\n",
+                "_devopsBucket=", {"Ref": "devopsBucket"}, "\n",
+                "_environment=", {"Ref": "envType"}, "\n",
+                "_platform=", {"Ref": "platformName"}, "\n",
+                "_instance=", {"Ref": "envInstance"}, "\n",
+                "_appName=", {"Ref": "appName"},"\n",
+                "_appVersion=", {"Ref": "appVersion"}, "\n",
+                "_ansibleRoleVersion=", {"Ref": "ansibleRoleVersion"}, "\n",
+                "_infrastructureVersion=", {"Ref": "infrastructureVersion"}, "\n",
+                "_albTargetGroupArn=", {"Fn::ImportValue": {"Fn::Sub": "${appInfrastructureStackName}-target-group"}}, "\n",
+                "_logPrefix=${_platform}/${_appName}/${_environment}\n",
+                "\n",
+                "# pull ansible scripts\n",
+                "mkdir /root/ansible_scripts\n",
+                "aws s3 cp s3://${_devopsBucket}/ansible/${_ansibleRoleVersion}/scripts /root/ansible_scripts --recursive --region ${_region}\n",
+                "chmod -R +x /root/ansible_scripts\n",
+                "\n",
+                "# run bootstrap_logs\n",
+                "chmod u+x /root/ansible_scripts/bootstrap_logs.sh && /root/ansible_scripts/bootstrap_logs.sh ${_logPrefix}\n",
+                "\n",
+                "# pull ansible role archive\n",
+                "aws s3 cp s3://${_devopsBucket}/ansible/${_ansibleRoleVersion}/ansible_roles.zip /root/ansible_roles.zip --region ${_region}\n",
+                "\n",
+                "# run bootstrap\n",
+                "chmod u+x /root/ansible_scripts/bootstrap.sh && /root/ansible_scripts/bootstrap.sh | while IFS= read -r line; do echo \"$(date '+%Y-%m-%d %H:%M:%S') $line\"; done |& tee -a /var/log/bootstrap.log\n",
+                "\n",
+                "# deploy ansible roles\n",
+                "chmod u+x /root/ansible_scripts/deploy_roles.sh && /root/ansible_scripts/deploy_roles.sh /root/ansible_roles.zip | while IFS= read -r line; do echo \"$(date '+%Y-%m-%d %H:%M:%S') $line\"; done |& tee -a /var/log/bootstrap.log\n",
+                "\n",
+                "# pull playbooks\n",
+                "aws s3 cp s3://${_devopsBucket}/projects/${_platform}/${_infrastructureVersion}/ansible/playbooks/${_appName}/ /etc/ansible/ --recursive --region ${_region}\n",
+                "\n",
+                "# pull variable file\n",
+                "aws s3 cp s3://${_devopsBucket}/variables/${_environment}/ansible/${_platform}/${_appName}-${_instance}.yml /etc/ansible/variables.yml --region ${_region}\n",
+                "\n",
+                "# run playbooks\n",
+                "APP_VERSION=${_appVersion} ansible-playbook /etc/ansible/provision_playbook.yml\n",
+                "\n",
+                "# Run CFN wait\n",
+                "python /root/ansible_scripts/aws/cfn_lb_wait.py --lb-version v2 --target-group-arn ${_albTargetGroupArn} --instance-port 8443 -e ${_environment} -s ${_stackName} --resource-id AutoScalingGroup\n"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "AutoScalingGroup": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Description": "AutoscalingGroup for EC2 instances",
+      "Properties": {
+        "DesiredCapacity": {"Ref": "asgDesiredCount"},
+        "MaxSize": {"Ref": "asgMaxCount"},
+        "MinSize": {"Ref": "asgMinCount"},
+        "HealthCheckGracePeriod": 800,
+        "HealthCheckType": "ELB",
+        "TerminationPolicies": ["Default"],
+        "LaunchConfigurationName": {"Ref": "LaunchConfig"},
+        "TargetGroupARNs": [{"Fn::ImportValue": {"Fn::Sub": "${appInfrastructureStackName}-target-group"}}],
+        "VPCZoneIdentifier": {"Ref": "privateSubnets"}
+      },
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Count": {"Ref": "asgDesiredCount"},
+          "Timeout": "PT15M"
+        }
+      },
+      "UpdatePolicy": {
+        "AutoScalingRollingUpdate": {
+          "MaxBatchSize": {"Ref": "asgUpdateBatchSize"},
+          "PauseTime": "PT15M",
+          "WaitOnResourceSignals": "true",
+          "SuspendProcesses": ["ScheduledActions"]
+        },
+        "AutoScalingScheduledAction" : {
+          "IgnoreUnmodifiedGroupSizeProperties" : "true"
+        }
+      },
+      "DependsOn": ["LaunchConfig"]
+    },
+    "ScheduledActionUpTime": {
+      "Type": "AWS::AutoScaling::ScheduledAction",
+      "Description": "Scheduled uptime for the service",
+      "Properties": {
+        "AutoScalingGroupName": {"Ref": "AutoScalingGroup"},
+        "MaxSize": {"Ref": "asgMaxCount"},
+        "MinSize": {"Ref": "asgMinCount"},
+        "DesiredCapacity": {"Ref": "asgDesiredCount"},
+        "Recurrence": "0 12 * * MON-FRI"
+      },
+      "DependsOn": "AutoScalingGroup"
+    },
+    "ScheduledActionDownTime": {
+      "Type": "AWS::AutoScaling::ScheduledAction",
+      "Description": "Scheduled downtime for the service",
+      "Properties": {
+        "AutoScalingGroupName": {"Ref": "AutoScalingGroup"},
+        "MaxSize": 0,
+        "MinSize": 0,
+        "DesiredCapacity": 0,
+        "Recurrence": "0 0 * * *"
+      },
+      "DependsOn": "AutoScalingGroup"
+    }
+  }
+}

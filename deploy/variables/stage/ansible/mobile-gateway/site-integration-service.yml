@@ -1,0 +1,117 @@
+---
+
+# base variables
+host_purpose: site-integration-service
+host_environment: stage
+host_region: us-east-1
+owning_group: mobile
+
+devops_bucket: "wex-mobile-devops"
+
+# splunk variables
+splunk_rpm_url: "s3://{{devops_bucket}}/installers/splunk/splunkforwarder-7.2.0-8c86330ac18-linux-2.6-x86_64.rpm"
+splunk_mgmt_port: 6089
+
+# trendmicro variables
+trendmicro_provider: saas
+trendmicro_url: "s3://{{devops_bucket}}/installers/trendmicro/TrendMicro-Agent-amzn1-10.1.0-356.x86_64.rpm"
+trendmicro_dsm_url: dsm://agents.deepsecurity.trendmicro.com:443/
+trendmicro_policy_id: 201
+trendmicro_tenant_id: "{{host_environment}}.trendmicro.tenant-id"
+trendmicro_token: "{{host_environment}}.trendmicro.token"
+
+# sumologic variables
+sumologic_rpm_url: "s3://{{devops_bucket}}/installers/sumologic/SumoCollector-19.227-15.x86_64.rpm"
+sumologic_access_id_param: "{{host_environment}}.sumologic.accessid"
+sumologic_access_key_param: "{{host_environment}}.sumologic.accesskey"
+sumologic_client_name: "{{host_purpose}}-{{host_environment}}"
+
+sumologic_sources:
+  bootstrap_source:
+    name: bootstrap
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/bootstrap"
+    pathExpression: "/var/log/bootstrap.log"
+  cloud_init_source:
+    name: cloud-init
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/cloud-init"
+    pathExpression: "/var/log/cloud-init.log"
+  ansible_source:
+    name: ansible
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/ansible"
+    pathExpression: "/var/log/ansible.log"
+  app_source:
+    name: app
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/app"
+    pathExpression: "/var/log/site-integration-service/app.log"
+  app_startup_source:
+    name: app-startup
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/app-startup"
+    pathExpression: "/var/log/app.log"
+
+# jdk variables
+jdk_rpm_url: "s3://{{devops_bucket}}/installers/jdk/jdk-8u151-linux-x64.rpm"
+
+# nexus artifact variables
+nexus_artifacts:
+  oauth-service:
+    version_env_var: "APP_VERSION"
+    group: "com.wex.fleet.mobile"
+    artifact: "site-integration-service"
+    downloaded_location: "/root/app.jar"
+
+# keystore download variables
+keystore_s3_url: "s3://{{devops_bucket}}/keystores/stage/site-integration-service/keystore.jks"
+keystore_download_location: "/root/keystore.jks"
+
+# truststore download variables
+truststore_s3_url: "s3://{{devops_bucket}}/keystores/stage/site-integration-service/truststore.jks"
+truststore_download_location: "/root/truststore.jks"
+
+# dynamic spring properties
+spring_props_file: "/root/application-{{host_environment}}.properties"
+spring_props_properties:
+  keystore-path:
+    prop_name: "gcam.keystorePath"
+    param_store: "no"
+    encrypted: "no"
+    value: "/root/keystore.jks"
+  keystore-password:
+    prop_name: "gcam.keystorePassword"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.site-int.keystore-password"
+  gcam-keystore-alias:
+    prop_name: "gcam.alias"
+    param_store: "no"
+    encrypted: "no"
+    value: "gcam-site"
+  gcam-keystore-alias-password:
+    prop_name: "gcam.aliasPassword"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.site-int.keystore-gcam-alias-password"
+  truststore-path:
+    prop_name: "gcam.trustStorePath"
+    param_store: "no"
+    encrypted: "no"
+    value: "/root/truststore.jks"
+  truststore-password:
+    prop_name: "gcam.trustStorePassword"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.site-int.truststore-password"
+  fdc-api-url:
+    prop_name: "fdc.api.base-url"
+    param_store: "yes"
+    encrypted: "no"
+    value: "{{host_environment}}.fdc.api.base-url"
+  fdc-api-key:
+    prop_name: "fdc.api.key"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.fdc.api.key"
+  fdc-api-secret:
+    prop_name: "fdc.api.secret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.fdc.api.secret"

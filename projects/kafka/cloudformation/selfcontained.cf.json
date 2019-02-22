@@ -1,0 +1,385 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Single Instance Kafka and Zookeeper",
+  "Parameters": {
+    "environment": {
+      "Description": "The environment for the application stack",
+      "Type": "String",
+      "Default": "dev"
+    },
+    "clusterPurpose": {
+      "Description": "The purpose of the kafka server",
+      "Type": "String"
+    },
+    "vpcStackName": {
+      "Description": "The stack name for the VPC CF stack",
+      "Type": "String"
+    },
+    "enableSsh": {
+      "Type": "String",
+      "Description": "If to enable ssh on instances",
+      "Default": "no",
+      "AllowedValues": [
+        "yes",
+        "no"
+      ]
+    },
+    "devopsBucket": {
+      "Description": "The devops bucket to use",
+      "Type": "String",
+      "Default": "wex-mobile-devops"
+    },
+    "amiId": {
+      "Description": "The id of the ami to use",
+      "Type": "String"
+    },
+    "instanceType": {
+      "Description": "The instance type to use",
+      "Type": "String",
+      "Default": "t3.large"
+    },
+    "diskSize": {
+      "Description": "The disk size to use for the instance",
+      "Type": "Number",
+      "Default": 40
+    },
+    "instanceKeyPair": {
+      "Description": "The keypair to use for the instance if ssh is enabled",
+      "Type": "String"
+    },
+    "kafkaInfrastructureVersion": {
+      "Description": "The version of the kafka project (template and master playbook to use)",
+      "Type": "String"
+    },
+    "ansibleRoleVersion": {
+      "Description": "The version of the ansible roles to use",
+      "Type": "String"
+    },
+    "sumoAgentVersion": {
+      "Description": "The version of the sumologic agent to use for bootstrapping",
+      "Type": "String",
+      "Default": "19.227-15"
+    },
+    "hostedZoneId": {
+      "Description": "The hosted zone id for updating DNS names",
+      "Type": "String"
+    },
+    "deploymentId": {
+      "Type": "String"
+    }
+  },
+  "Conditions": {
+    "EnableSsh": { "Fn::Equals": [ { "Ref": "enableSsh" }, "yes" ] },
+    "NonProd": { "Fn::Not": [ { "Fn::Equals": [ { "Ref": "environment" }, "prod" ] } ] }
+  },
+  "Resources": {
+    "InstanceIamRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "ec2.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+          }]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "CloudWatch",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "autoscaling:Describe*",
+                    "cloudwatch:Describe*",
+                    "cloudwatch:List*",
+                    "cloudwatch:PutMetricAlarm*",
+                    "cloudwatch:PutMetricData",
+                    "cloudwatch:DeleteAlarms",
+                    "cloudwatch:Get*"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "Ec2Tagging",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:CreateTags",
+                    "ec2:DeleteTags",
+                    "ec2:DescribeTags",
+                    "ec2:DescribeInstances"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "ParameterStoreAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "ssm:DescribeParameters",
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "ssm:GetParameter",
+                  "Resource": [
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".sumologic.accessid" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".sumologic.accesskey" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".supervisor.password" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".trendmicro.tenant-id" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".trendmicro.token" ] ] }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "kms:Decrypt",
+                  "Resource": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-ParameterStoreKmsKey-Arn" } }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "S3Access",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetBucketLocation",
+                    "s3:ListAllMyBuckets"
+                  ],
+                  "Resource": "arn:aws:s3:::*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:List*",
+                    "s3:GetObject"
+                  ],
+                  "Resource": [
+                    { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "devopsBucket" } ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "devopsBucket" }, "/*" ] ] }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "Route53",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Action": [
+                    "route53:List*",
+                    "route53:Get*"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": "*"
+                },
+                {
+                  "Action": "route53:ChangeResourceRecordSets",
+                  "Effect": "Allow",
+                  "Resource": { "Fn::Join": [ "", [ "arn:aws:route53:::hostedzone/", { "Ref": "hostedZoneId" } ] ] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "InstanceIamProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "InstanceProfileName": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "kafka", { "Ref": "clusterPurpose" },
+          "selfcontained-iam-profile" ] ] },
+        "Path": "/",
+        "Roles": [ { "Ref": "InstanceIamRole" } ]
+      }
+    },
+    "KafkaIngressSg": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupName": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "kafka", { "Ref": "clusterPurpose" },
+        "ingress-SG" ] ] },
+        "GroupDescription": { "Fn::Join": [ " ", [ { "Ref": "environment" }, "Kafka", { "Ref": "clusterPurpose" },
+          "Ingress Security Group" ] ] },
+        "VpcId": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-Vpc-Id" } }
+      }
+    },
+    "InstanceSg": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupName": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "kafka", { "Ref": "clusterPurpose" },
+          "selfcontained-SG" ] ] },
+        "GroupDescription": { "Fn::Join": [ " ", [ { "Ref": "environment" }, "Kafka", { "Ref": "clusterPurpose" },
+          "Self-Contained Instance Security Group" ] ] },
+        "VpcId": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-Vpc-Id" } },
+        "SecurityGroupIngress": [
+          {
+            "SourceSecurityGroupId": { "Ref": "KafkaIngressSg" },
+            "IpProtocol": "tcp",
+            "FromPort": 9092,
+            "ToPort": 9092
+          }
+        ]
+      }
+    },
+    "ProxySshDev78NetIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Condition": "EnableSsh",
+      "Properties": {
+        "GroupId": { "Ref": "InstanceSg" },
+        "IpProtocol": "tcp",
+        "FromPort": 22,
+        "ToPort": 22,
+        "CidrIp": "10.78.0.0/16"
+      }
+    },
+    "ProxySshDev79NetIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Condition": "EnableSsh",
+      "Properties": {
+        "GroupId": { "Ref": "InstanceSg" },
+        "IpProtocol": "tcp",
+        "FromPort": 22,
+        "ToPort": 22,
+        "CidrIp": "10.79.0.0/16"
+      }
+    },
+    "InstanceLc": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Properties": {
+        "IamInstanceProfile": { "Ref": "InstanceIamProfile" },
+        "ImageId": { "Ref": "amiId" },
+        "InstanceType": { "Ref": "instanceType" },
+        "SecurityGroups": [ { "Ref": "InstanceSg" } ],
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/xvda",
+            "Ebs": {
+              "DeleteOnTermination": true,
+              "VolumeSize": { "Ref": "diskSize" },
+              "VolumeType": "gp2"
+            }
+          }
+        ],
+        "KeyName": { "Fn::If": [ "EnableSsh", { "Ref": "instanceKeyPair" }, { "Ref": "AWS::NoValue" } ] },
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash\n",
+                "\n",
+                "# initialization variables\n",
+                "_devopsBucket=", { "Ref": "devopsBucket" }, "\n",
+                "_environment=", { "Ref": "environment" }, "\n",
+                "_region=", { "Ref": "AWS::Region" }, "\n",
+                "_kafkaInfrastructureVersion=", { "Ref": "kafkaInfrastructureVersion" }, "\n",
+                "_kafkaPurpose=", { "Ref": "clusterPurpose" }, "\n",
+                "_ansibleRoleVersion=", { "Ref": "ansibleRoleVersion" }, "\n",
+                "_sumoAgentVersion=", { "Ref": "sumoAgentVersion" }, "\n",
+                "_stackName=", { "Ref": "AWS::StackName" }, "\n",
+                "\n",
+                "# pull ansible scripts\n",
+                "mkdir /root/ansible_scripts\n",
+                "aws s3 cp s3://${_devopsBucket}/ansible/${_ansibleRoleVersion}/scripts /root/ansible_scripts ",
+                "--recursive --region ${_region}\n",
+                "\n",
+                "# run bootstrap_logs\n",
+                "_sumoS3RpmUrl=\"s3://${_devopsBucket}/installers/sumologic/SumoCollector-${_sumoAgentVersion}.x86_64.rpm\"\n",
+                "chmod 700 /root/ansible_scripts/bootstrap_logs.sh && /root/ansible_scripts/bootstrap_logs.sh ",
+                "sumo ${_environment} kafka-${_kafkaPurpose} mobile ${_sumoS3RpmUrl}\n",
+                "\n",
+                "# pull ansible role archive\n",
+                "aws s3 cp s3://${_devopsBucket}/ansible/${_ansibleRoleVersion}/ansible_roles.zip /root/ansible_roles.zip ",
+                "--region ${_region}\n",
+                "\n",
+                "# run bootstrap\n",
+                "chmod 700 /root/ansible_scripts/bootstrap.sh && /root/ansible_scripts/bootstrap.sh | while IFS= ",
+                "read -r line; do echo \"$(date '+%Y-%m-%d %H:%M:%S') $line\"; done |& tee -a /var/log/bootstrap.log\n",
+                "\n",
+                "# deploy ansible roles\n",
+                "chmod 700 /root/ansible_scripts/deploy_roles.sh && /root/ansible_scripts/deploy_roles.sh ",
+                "/root/ansible_roles.zip | while IFS= read -r line; do echo \"$(date '+%Y-%m-%d %H:%M:%S') $line\"; ",
+                "done |& tee -a /var/log/bootstrap.log\n",
+                "\n",
+                "# pull playbooks\n",
+                "aws s3 cp s3://${_devopsBucket}/projects/kafka/${_kafkaInfrastructureVersion}/ansible/playbooks/selfcontained/ ",
+                "/etc/ansible/ --recursive --region ${_region}\n",
+                "\n",
+                "# pull variable file\n",
+                "aws s3 cp s3://${_devopsBucket}/variables/${_environment}/ansible/kafka/${_kafkaPurpose}.yml ",
+                "/etc/ansible/variables.yml --region ${_region}\n",
+                "\n",
+                "# run playbooks\n",
+                "/usr/local/bin/ansible-playbook /etc/ansible/provision_playbook.yml\n",
+                "\n",
+                "# send cfn resource signal\n",
+                "/opt/aws/bin/cfn-signal -e 0 --stack ${_stackName} --resource InstanceAsg --region ${_region} \n"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "InstanceAsg": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "Cooldown": 300,
+        "DesiredCapacity": 1,
+        "MaxSize": 2,
+        "MinSize": 1,
+        "HealthCheckGracePeriod": 500,
+        "HealthCheckType": "EC2",
+        "LaunchConfigurationName": { "Ref": "InstanceLc" },
+        "VPCZoneIdentifier": [
+          { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-PrivateSubnetA-Id" } },
+          { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-PrivateSubnetB-Id" } }
+        ]
+      },
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Count": 1,
+          "Timeout": "PT15M"
+        }
+      },
+      "UpdatePolicy": {
+        "AutoScalingRollingUpdate": {
+          "MaxBatchSize": 1,
+          "PauseTime": "PT15M",
+          "WaitOnResourceSignals": true
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "OutputKafkaIngressSgId": {
+      "Description": "The ingress security group for the kafka servers",
+      "Value": { "Ref": "KafkaIngressSg" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-KafkaIngressSg-Id" }
+      }
+    }
+  }
+}

@@ -1,0 +1,215 @@
+---
+
+# base variables
+host_purpose: oauth-service
+host_environment: prod
+host_region: us-east-1
+owning_group: mobile
+
+devops_bucket: "wex-mobile-devops"
+
+# splunk variables
+splunk_rpm_url: "s3://{{devops_bucket}}/installers/splunk/splunkforwarder-7.2.0-8c86330ac18-linux-2.6-x86_64.rpm"
+splunk_mgmt_port: 6089
+
+# trendmicro variables
+trendmicro_provider: saas
+trendmicro_url: "s3://{{devops_bucket}}/installers/trendmicro/TrendMicro-Agent-amzn1-10.1.0-356.x86_64.rpm"
+trendmicro_dsm_url: dsm://agents.deepsecurity.trendmicro.com:443/
+trendmicro_policy_id: 201
+trendmicro_tenant_id: "{{host_environment}}.trendmicro.tenant-id"
+trendmicro_token: "{{host_environment}}.trendmicro.token"
+
+# sumologic variables
+sumologic_rpm_url: "s3://{{devops_bucket}}/installers/sumologic/SumoCollector-19.227-15.x86_64.rpm"
+sumologic_access_id_param: "{{host_environment}}.sumologic.accessid"
+sumologic_access_key_param: "{{host_environment}}.sumologic.accesskey"
+sumologic_client_name: "{{host_purpose}}-{{host_environment}}"
+
+sumologic_sources:
+  bootstrap_source:
+    name: bootstrap
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/bootstrap"
+    pathExpression: "/var/log/bootstrap.log"
+  ansible_source:
+    name: ansible
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/ansible"
+    pathExpression: "/var/log/ansible.log"
+  app_source:
+    name: app
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/app"
+    pathExpression: "/var/log/{{host_purpose}}/app.log"
+
+# jdk variables
+jdk_rpm_url: "s3://{{devops_bucket}}/installers/jdk/jdk-8u151-linux-x64.rpm"
+
+# nexus artifact variables
+nexus_artifacts:
+  oauth-service:
+    version_env_var: "APP_VERSION"
+    group: "com.wex"
+    artifact: "oauth-service"
+    downloaded_location: "/root/app.jar"
+
+# keystore download variables
+keystore_s3_url: "s3://{{devops_bucket}}/keystores/{{host_environment}}/keystore.jks"
+keystore_download_location: "/root/keystore.jks"
+
+# dynamic spring properties
+spring_props_file: "/root/application-{{host_environment}}.properties"
+spring_props_properties:
+  oauth-pub-key:
+    prop_name: "security.oauth2.resource.jwt.keyValue"
+    param_store: "yes"
+    encrypted: "no"
+    value: "{{host_environment}}.oauth.public-key"
+  deuce-client-secret:
+    prop_name: "deuce.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.deuce.client-secret"
+  nbv-client-secret:
+    prop_name: "nbv.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.nbv.client-secret"
+  dd-invite-client-secret:
+    prop_name: "driver-dash-invite.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.driverdash-invite.client-secret"
+  driver-id-retrieval-client-secret:
+    prop_name: "driver-id-retrieval.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.driverid-reteval.client-secret"
+  driver-service-client-secret:
+    prop_name: "driver-service.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.driverservice.client-secret"
+  driverdash-service-client-secret:
+    prop_name: "driverdash-service.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.driverdashservice.client-secret"
+  program-service.client-secret:
+    prop_name: "program-service.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.programservice.client-secret"
+  image-service-client-secret:
+    prop_name: "image-service.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.imageservice.client-secret"
+  oauth-service-client-secret:
+    prop_name: "oauth-service.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.oauthservice.client-secret"
+  driver-dash-client-secret:
+    prop_name: "driver-dash.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.driverdash.client-secret"
+  notification-service-client-secret:
+    prop_name: "notification-service.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.notificationservice.client-secret"
+  transaction-service-client-secret:
+    prop_name: "transaction-service.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.transactionservice.client-secret"
+  site-locator-client-secret:
+    prop_name: "site-locator.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.sitelocator.client-secret"
+  smarthub-client-secret:
+    prop_name: "smarthub.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.smarthub.client-secret"
+  wexconnect-client-secret:
+    prop_name: "wex-connect.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.wexconnect.client-secret"
+  site-service-client-secret:
+    prop_name: "site-service.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.siteservice.client-secret"
+  loyalty-service-client-secret:
+    prop_name: "loyalty-service.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.loyaltyservice.client-secret"
+  wexonline-service-client-secret:
+    prop_name: "wexonline-service.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.wexonlineservice.client-secret"
+  smarthub-service-client-secret:
+    prop_name: "smarthub-service.client-secret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.smarthubservice.client-secret"
+  shell-sip-client-client-secret:
+    prop_name: "shell-sip-client.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.shellsipclient.client-secret"
+  shell-sip-client-username:
+    prop_name: "shell.sip-client.username"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.shellsipclient.username"
+  shell-sip-client-password:
+    prop_name: "shell.sip-client.password"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.shellsipclient.password"
+  clientidentity-service-client-secret:
+    prop_name: "client-identity-service.client-secret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.clientidentityservice.client-secret"
+  keystore-location:
+    prop_name: "keystore.location"
+    param_store: "no"
+    encrypted: "no"
+    value: "file:/root/keystore.jks"
+  keystore-alias:
+    prop_name: "keystore.alias"
+    param_store: "no"
+    encrypted: "no"
+    value: "oauth-service"
+  keystore-password:
+    prop_name: "keystore.password"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.oauth.keystore-password"
+  keystore-alias-password:
+    prop_name: "keystore.alias.password"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.oauth.keystore-alias-password"
+  p97-client-secret:
+    prop_name: "p97.clientSecret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.p97.client-secret"
+  p97-username:
+    prop_name: "p97.username"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.p97.username"
+  p97-password:
+    prop_name: "p97.password"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "{{host_environment}}.p97.password"

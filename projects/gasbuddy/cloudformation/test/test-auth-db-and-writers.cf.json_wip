@@ -1,0 +1,42 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Test DB and lambda writer stack",
+
+  "Parameters": {
+    "environment": {
+      "Type": "String",
+      "Description": "The environment for the stack"
+    },
+    "kinesisStackName": {
+      "Type": "String",
+      "Description": "The stack name of the kinesis stack for gas buddy"
+    },
+    "vpcStackName": {
+      "Type": "String",
+      "Description": "The stack name of the vpc stack"
+    },
+    "kmsStackName": {
+      "Type": "String",
+      "Description": "The stack name of the kms key for gasbuddy for references"
+    },
+    "writerMemory": {
+      "Type": "Number",
+      "Description": "The lambda memory given to the lambda function",
+      "Default": "128"
+    },
+    "writerTimeout": {
+      "Type": "Number",
+      "Description": "The timeout for the lambda function",
+      "Default": "300"
+    },
+    "artifactsBucket": {
+      "Type": "String",
+      "Description": "The S3 bucket where code is stored"
+    }
+
+  },
+
+  "Resources": {
+    
+  }
+}

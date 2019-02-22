@@ -1,0 +1,15 @@
+{
+  "Stacks": {
+    "gasBuddy-serverless": {
+      "cloudformationTemplate": "gasBuddy-serverless.cf.json",
+      "environments": {
+        "stage": {
+          "stackName": "gasBuddy-serverless-stage"
+        }
+      }
+    },
+    "gasBuddy-proxy": {
+      "cloudformationTemplate": "gasBuddy-proxy.cf.json"
+    }
+  }
+}

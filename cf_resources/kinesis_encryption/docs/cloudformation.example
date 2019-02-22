@@ -1,0 +1,9 @@
+"EncryptKinesis": {
+    "Type": "Custom::KinesisEncryption",
+    "Properties": {
+        "ServiceToken": "<Lambda Arn>"
+        "KmsKeyId": "<Key ID>",
+        "KinesisStreamName": "<Stream Name>",
+        "DesiredState": "<encrypted or decrypted>"
+    }
+}

@@ -1,0 +1,88 @@
+---
+
+# base variables
+host_purpose: kafka-mg
+host_environment: prod
+owning_group: mobile
+
+# splunk variables
+splunk_rpm_url: s3://wex-mobile-devops/installers/splunk/splunkforwarder-7.2.0-8c86330ac18-linux-2.6-x86_64.rpm
+splunk_admin_password: prod.splunk.admin-password
+splunk_mgmt_port: 8089
+
+# trendmicro variables
+trendmicro_provider: saas
+trendmicro_url: s3://wex-mobile-devops/installers/trendmicro/TrendMicro-Agent-amzn1-10.1.0-356.x86_64.rpm
+trendmicro_dsm_url: dsm://agents.deepsecurity.trendmicro.com:443/
+trendmicro_policy_id: 201
+trendmicro_tenant_id: prod.trendmicro.tenant-id
+trendmicro_token: prod.trendmicro.token
+
+# sumologic variables
+sumologic_rpm_url: s3://wex-mobile-devops/installers/sumologic/SumoCollector-19.227-15.x86_64.rpm
+sumologic_access_id_param: prod.sumologic.accessid
+sumologic_access_key_param: prod.sumologic.accesskey
+sumologic_client_name: "kafka-mg-{{host_environment}}"
+
+sumologic_sources:
+  bootstrap_source:
+    name: bootstrap
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/bootstrap"
+    pathExpression: "/var/log/bootstrap.log"
+  ansible_source:
+    name: ansible
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/ansible"
+    pathExpression: "/var/log/ansible.log"
+  kafka_controller:
+    name: kafka-controller
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/kafka-controller"
+    pathExpression: "/opt/{{ kafka_dir_name }}/logs/controller.log"
+  kafka-authorizer:
+    name: kafka-authorizer
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/kafka-authorizer"
+    pathExpression: "/opt/{{ kafka_dir_name }}/logs/kafka-authorizer.log"
+  kafka-request:
+    name: kafka-request
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/kafka-request"
+    pathExpression: "/opt/{{ kafka_dir_name }}/logs/kafka-request.log"
+  kafka-gc:
+    name: kafka-gc
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/kafka-gc"
+    pathExpression: "/opt/{{ kafka_dir_name }}/logs/kafkaServer-gc.log.*.current"
+  kafka-server-out:
+    name: kafka-server-out
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/kafka-server-out"
+    pathExpression: "/opt/{{ kafka_dir_name }}/logs/kafkaServer.out"
+  kafka-log-cleaner:
+    name: kafka-log-cleaner
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/kafka-log-cleaner"
+    pathExpression: "/opt/{{ kafka_dir_name }}/logs/log-cleaner.log"
+  kafka-server:
+    name: kafka-server
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/kafka-server"
+    pathExpression: "/opt/{{ kafka_dir_name }}/logs/server.log"
+  kafka-state-change:
+    name: kafka-state-change
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/kafka-state-change"
+    pathExpression: "/opt/{{ kafka_dir_name }}/logs/state-change.log"
+
+# jdk variables
+jdk_rpm_url: "s3://wex-mobile-devops/installers/jdk/jdk-8u151-linux-x64.rpm"
+
+# kafka variables
+zookeeper_package_url: s3://wex-mobile-devops/installers/zookeeper/zookeeper-3.4.10.tar.gz
+kafka_package_url: s3://wex-mobile-devops/installers/kafka/kafka_2.11-1.0.0.tgz
+
+kafka_dns_domain: "prod2.intwexmobile.net"
+kafka_dns_name: "kafka-mg.prod2.intwexmobile.net"
+
+kafka_topics:
+  transaction-updates:
+    replication_factor: 1
+    partitions: 1
+  transaction-requested:
+    replication_factor: 1
+    partitions: 1
+  site-updates:
+    replication_factor: 1
+    partitions: 1

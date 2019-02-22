@@ -1,0 +1,7 @@
+{
+  "InstanceType": "kafka.m5.large",
+  "ClientSubnets": ["subnet-088e67ec45537060e", "subnet-0bf40463bd86f5299", "subnet-0d26b8dedcbd4f96f"],
+  "SecurityGroups": [
+    "AWSKafkaTutorialVPC Security Group ID"
+  ]
+}

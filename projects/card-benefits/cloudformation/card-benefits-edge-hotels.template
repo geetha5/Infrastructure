@@ -1,0 +1,487 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "MWD - Card Benefits - Hotel Edge Service Template",
+
+  "Parameters": {
+    "vpc": {
+      "Type": "AWS::EC2::VPC::Id",
+      "Description": "VPC to create resources under"
+    },
+    "accountStackName":{
+      "Type": "String",
+      "Description": "account stack name"
+    },
+    "platformStackName": {
+      "Type": "String",
+      "Description": "parent stack name"
+    },
+    "platformInstanceStackName": {
+      "Type": "String",
+      "Description": "instance stack name"
+    },
+    "envType": {
+      "Type": "String",
+      "Description": "designated environment type",
+      "Default": "dev",
+      "AllowedValues": ["dev", "stage", "prod"]
+    },
+    "instance": {
+      "Type": "String",
+      "Description": "unique short name for this Platform Instance, e.g. sit, dit",
+      "MinLength": 3,
+      "MaxLength": 10,
+      "AllowedPattern": "^[a-z][a-z0-9\\-]*$",
+      "ConstraintDescription": "Must start with a letter, only contain lower-case letters, '-', and/or numbers"
+    },
+    "deploymentId": {
+      "Type": "String",
+      "Description": "The unique ID for the deployment"
+    },
+    "devopsBucket": {
+      "Description": "The bucket for devops related stuff",
+      "Type": "String",
+      "Default": "wex-mobile-devops"
+    },
+
+    "privateSubnets": {
+      "Type": "List<AWS::EC2::Subnet::Id>",
+      "Description": "Private Subnets"
+    },
+    "amiId": {
+      "Description": "The AMI id to use for instances",
+      "Type": "String"
+    },
+    "enableSsh": {
+      "Type": "String",
+      "Description": "If to enable ssh on instances",
+      "Default": "no",
+      "AllowedValues": ["yes", "no"]
+    },
+    "instanceType": {
+      "Description": "The instance type to use",
+      "Type": "String"
+    },
+    "ec2KeyPair": {
+      "Description": "The instance keypair to use, this will only be used if enableSSH is yes, but must be passed",
+      "Type": "String",
+      "Default": "mwd-devops"
+    },
+
+    "asgDesiredCapacity": {
+      "Description": "The number of instances that are desired in the ASG",
+      "Type": "String",
+      "Default": "2"
+    },
+    "asgMaxCount": {
+      "Description": "The max number of instances that can be in the ASG",
+      "Type": "String",
+      "Default": "4"
+    },
+    "asgMinCount": {
+      "Description": "The min number of instances that can be in the ASG",
+      "Type": "String",
+      "Default": "0"
+    },
+    "asgUpdateBatchSize": {
+      "Description": "The batch size of updates that are run by the ASG when doing a rolling deploy",
+      "Type": "String",
+      "Default": "1"
+    },
+
+    "appName": {
+      "Description": "The application name being deployed",
+      "Type": "String",
+      "Default": "hotel-edge-service"
+    },
+    "appVersion": {
+      "Description": "The version of the java application to deploy",
+      "Type": "String"
+    },
+
+    "sumoAgentVersion": {
+      "Description": "The version of the sumologic agent to use for bootstrapping",
+      "Type": "String",
+      "Default": "19.227-15"
+    },
+    "ansibleRoleVersion": {
+      "Description": "The version of the ansible roles to deploy",
+      "Type": "String"
+    },
+    "infrastructureVersion": {
+      "Description": "The version of the infrastructure project to deploy",
+      "Type": "String"
+    }
+  },
+
+  "Conditions": {
+    "isSshEnabled": {"Fn::Equals": [{"Ref": "enableSsh"}, "yes"]},
+    "shouldCreateDevResources": {"Fn::Equals": [{"Ref": "envType"}, "dev"]},
+    "shouldCreateStageResources": {"Fn::Equals": [{"Ref": "envType"}, "stage"]},
+    "shouldCreateProdResources": {"Fn::Equals": [{"Ref": "envType"}, "prod"]},
+    "isProduction": {"Fn::Equals": [{"Ref": "envType"}, "prod"]},
+    "isNotProduction": {"Fn::Not": [{"Fn::Equals": [{"Ref": "envType"}, "prod"]}]}
+  },
+
+  "Resources": {
+    "TargetGroupPublicService": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Description": "TargetGroup for Public Edge Service",
+      "Properties": {
+        "Name": {"Fn::Sub": "${instance}-${appName}-TG"},
+        "HealthCheckIntervalSeconds": 10,
+        "HealthCheckPath": "/actuator/health",
+        "HealthCheckProtocol": "HTTP",
+        "HealthCheckTimeoutSeconds": 5,
+        "HealthyThresholdCount": 2,
+        "UnhealthyThresholdCount": 2,
+        "Port": 8080,
+        "Protocol": "HTTP",
+        "VpcId": {"Ref": "vpc"},
+        "Tags": [
+          {"Key": "Name", "Value": {"Fn::Sub": "${appName} Target Group"}}
+        ]
+      }
+    },
+    "ListenerRuleHttpsPublicService": {
+      "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+      "Description": "Listener Rule to connect TargetGroup to elb",
+      "Properties": {
+        "Actions": [{"Type": "forward", "TargetGroupArn": {"Ref": "TargetGroupPublicService"}}],
+        "Conditions": [{
+          "Field": "host-header",
+          "Values": [{"Fn::Sub": ["edge-hotels.${domain}", {"domain": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-HostedZoneExternal-Domain"}}}]}]
+        }],
+        "ListenerArn": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-ListenerHttps-Arn"}},
+        "Priority": 2
+      },
+      "DependsOn": "TargetGroupPublicService"
+    },
+
+    "IamRoleInstance": {
+      "Type": "AWS::IAM::Role",
+      "Description": "IAM Role for ec2 instance to assume",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": ["ec2.amazonaws.com" ]},
+            "Action": ["sts:AssumeRole" ]
+          }]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "CloudWatch",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "autoscaling:Describe*",
+                    "cloudwatch:Describe*",
+                    "cloudwatch:List*",
+                    "cloudwatch:PutMetricAlarm*",
+                    "cloudwatch:PutMetricData",
+                    "cloudwatch:DeleteAlarms",
+                    "cloudwatch:Get*"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "CloudformationAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "cloudformation:Describe*",
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "cloudformation:SignalResource",
+                  "Resource": {"Fn::Sub": "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*"}
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "ElbAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": ["elasticloadbalancing:Describe*"],
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "Ec2Tagging",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:CreateTags",
+                    "ec2:DeleteTags",
+                    "ec2:DescribeTags",
+                    "ec2:DescribeInstances"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "ParameterStoreAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "ssm:DescribeParameters",
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "ssm:GetParameter*",
+                  "Resource": [
+                    {"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/shared.*"}
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "kms:Decrypt",
+                  "Resource": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-Parameter-KmsKey-Arn"}}
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "S3Access",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetBucketLocation",
+                    "s3:ListAllMyBuckets"
+                  ],
+                  "Resource": "arn:aws:s3:::*"
+                },
+                {
+                  "Action": ["s3:List*", "s3:HeadBucket", "s3:PutObject*"],
+                  "Effect": "Allow",
+                  "Resource": [
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}/system-reports/${envType}"},
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}/system-reports/${envType}/*"}
+                  ]
+                },
+                {
+                  "Action": ["s3:List*", "s3:GetObject"],
+                  "Effect": "Allow",
+                  "Resource": [
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}"},
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}/*"}
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "IamProfileInstance": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Description": "IAM Role Profile Name",
+      "Properties": {
+        "InstanceProfileName": {"Fn::Sub": ["${prefix}-${appName}-iam-profile", {"prefix": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-resource-prefix"}}}]},
+        "Path": "/",
+        "Roles": [{"Ref": "IamRoleInstance"}]
+      },
+      "DependsOn": "IamRoleInstance"
+    },
+
+    "SecGrpInstance": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Description": "Security Group for edge service instances",
+      "Properties": {
+        "GroupName": {"Fn::Sub": ["${prefix}-${appName}-sg", {"prefix": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-resource-prefix"}}}]},
+        "GroupDescription": {"Fn::Sub": "${envType} - Card Benefits - Hotel Edge Service Instance Security Group"},
+        "VpcId": {"Ref": "vpc"},
+        "SecurityGroupIngress": [
+                                         {"IpProtocol": "tcp", "FromPort": 8080, "ToPort": 8080, "SourceSecurityGroupId": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-SecGrpPublicAlb-Id"}}},
+          {"Fn::If": ["isNotProduction", {"IpProtocol": "tcp", "FromPort": 8080, "ToPort": 8080, "CidrIp": "10.78.0.0/15",   "Description": "WEX SoPo VPN Traffic"},         {"Ref": "AWS::NoValue"}]},
+          {"Fn::If": ["isNotProduction", {"IpProtocol": "tcp", "FromPort": 8080, "ToPort": 8080, "CidrIp": "10.178.32.0/21", "Description": "WEX remoteaccess VPN Traffic"}, {"Ref": "AWS::NoValue"}]},
+          {"Fn::If": ["isSshEnabled",    {"IpProtocol": "tcp", "FromPort": 22,   "ToPort": 22,   "CidrIp": "10.78.0.0/15",   "Description": "WEX SoPo VPN Traffic"},         {"Ref": "AWS::NoValue"}]},
+          {"Fn::If": ["isSshEnabled",    {"IpProtocol": "tcp", "FromPort": 22,   "ToPort": 22,   "CidrIp": "10.178.32.0/21", "Description": "WEX remoteaccess VPN Traffic"}, {"Ref": "AWS::NoValue"}]}
+        ],
+        "Tags": [
+          {"Key": "Name", "Value": {"Fn::Sub": ["${platform} - ${instance} - Hotels Edge Service Instance", {"platform": {"Fn::ImportValue": {"Fn::Sub": "${platformStackName}-platform"}}}]}}
+        ]
+      }
+    },
+
+    "SecGrpEgressAlbToInstance": {
+      "Type": "AWS::EC2::SecurityGroupEgress",
+      "Description": "Add Egress rule to allow public alb to talk to ec2 instances",
+      "Properties": {
+        "IpProtocol": "tcp", "FromPort": 8080, "ToPort": 8080, "DestinationSecurityGroupId": {"Ref": "SecGrpInstance"}, "Description": "Public ALB communication to Card Benefits Hotel Edge Service instances",
+        "GroupId": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-SecGrpPublicAlb-Id"}}
+      },
+      "DependsOn": ["SecGrpInstance"]
+    },
+
+    "LaunchConfig": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Properties": {
+        "IamInstanceProfile": {"Ref": "IamProfileInstance"},
+        "ImageId": {"Ref": "amiId"},
+        "InstanceType": {"Ref": "instanceType"},
+        "SecurityGroups": [{"Ref": "SecGrpInstance"}],
+        "BlockDeviceMappings": [{
+          "DeviceName": "/dev/xvda",
+          "Ebs": {
+            "DeleteOnTermination": true,
+            "VolumeSize": "30",
+            "VolumeType": "gp2"
+          }
+        }],
+        "KeyName": {"Fn::If": ["isSshEnabled", {"Ref": "ec2KeyPair"}, {"Ref": "AWS::NoValue"}]},
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash\n",
+                "\n",
+                "# initialization variables\n",
+                "_devopsBucket=", {"Ref": "devopsBucket"}, "\n",
+                "_environment=", {"Ref": "envType"}, "\n",
+                "_instance=", {"Ref": "instance"}, "\n",
+                "_region=", {"Ref": "AWS::Region"}, "\n",
+                "_appVersion=", {"Ref": "appVersion"}, "\n",
+                "_ansibleRoleVersion=", {"Ref": "ansibleRoleVersion"}, "\n",
+                "_infrastructureVersion=", {"Ref": "infrastructureVersion"}, "\n",
+                "_sumoAgentVersion=", {"Ref": "sumoAgentVersion"}, "\n",
+                "_albTargetGroupArn=", {"Ref": "TargetGroupPublicService"}, "\n",
+                "_stackName=", {"Ref": "AWS::StackName"}, "\n",
+                "_deploymentId=", {"Ref": "deploymentId"}, "\n",
+                "_appName=", {"Ref": "appName"},"\n",
+                "\n",
+                "# pull ansible scripts\n",
+                "mkdir /root/ansible_scripts\n",
+                "aws s3 cp s3://${_devopsBucket}/ansible/${_ansibleRoleVersion}/scripts /root/ansible_scripts --recursive --region ${_region}\n",
+                "chmod -R 700 /root/ansible_scripts\n",
+                "\n",
+                "# pull ansible role archive\n",
+                "aws s3 cp s3://${_devopsBucket}/ansible/${_ansibleRoleVersion}/ansible_roles.zip /root/ansible_roles.zip --region ${_region}\n",
+                "\n",
+                "# run bootstrap\n",
+                "chmod 700 /root/ansible_scripts/bootstrap.sh && /root/ansible_scripts/bootstrap.sh | while IFS= read -r line; do echo \"$(date '+%Y-%m-%d %H:%M:%S') $line\"; done |& tee -a /var/log/bootstrap.log\n",
+                "\n",
+                "# deploy ansible roles\n",
+                "chmod 700 /root/ansible_scripts/deploy_roles.sh && /root/ansible_scripts/deploy_roles.sh /root/ansible_roles.zip | while IFS= read -r line; do echo \"$(date '+%Y-%m-%d %H:%M:%S') $line\"; done |& tee -a /var/log/bootstrap.log\n",
+                "\n",
+                "# pull playbooks\n",
+                "aws s3 cp s3://${_devopsBucket}/projects/card-benefits/${_infrastructureVersion}/ansible/playbooks/${_appName}/ /etc/ansible/ --recursive --region ${_region}\n",
+                "\n",
+                "# pull variable file\n",
+                "aws s3 cp s3://${_devopsBucket}/variables/${_environment}/ansible/card-benefits/${_appName}-${_instance}.yml /etc/ansible/variables.yml --region ${_region}\n",
+                "\n",
+                "# run playbooks\n",
+                "APP_VERSION=${_appVersion} ansible-playbook /etc/ansible/provision_playbook.yml\n",
+                "\n",
+                "# run app jar\n",
+                "nohup java -jar /root/app.jar --spring.profiles.active=${_instance} > /var/log/app.log 2>&1 &\n",
+                "\n",
+                "# Run CFN wait\n",
+                "python /root/ansible_scripts/aws/cfn_lb_wait.py --lb-version v2 --target-group-arn ${_albTargetGroupArn} --instance-port 8080 -e ${_environment} -s ${_stackName} --resource-id InstanceAsg\n"
+              ]
+            ]
+          }
+        }
+      },
+      "DependsOn": ["IamProfileInstance", "SecGrpInstance"]
+    },
+    "InstanceAsg": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Description": "AutoscalingGroup for Card Benefits - Hotel Edge Service",
+      "Properties": {
+        "DesiredCapacity": {"Ref": "asgDesiredCapacity"},
+        "MaxSize": {"Ref": "asgMaxCount"},
+        "MinSize": {"Ref": "asgMinCount"},
+        "HealthCheckGracePeriod": 300,
+        "HealthCheckType": "ELB",
+        "TerminationPolicies": ["Default" ],
+        "LaunchConfigurationName": {"Ref": "LaunchConfig"},
+        "TargetGroupARNs": [{"Ref": "TargetGroupPublicService"}],
+        "VPCZoneIdentifier": {"Ref": "privateSubnets"}
+      },
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Count": {"Ref": "asgDesiredCapacity"},
+          "Timeout": "PT15M"
+        }
+      },
+      "UpdatePolicy": {
+        "AutoScalingRollingUpdate": {
+          "MaxBatchSize": {"Ref": "asgUpdateBatchSize"},
+          "PauseTime": "PT15M",
+          "WaitOnResourceSignals": true
+        }
+      },
+      "DependsOn": ["LaunchConfig", "TargetGroupPublicService"]
+    },
+    "ScheduledActionUpTime": {
+      "Type": "AWS::AutoScaling::ScheduledAction",
+      "Description": "Scheduled uptime for the service",
+      "Properties": {
+        "AutoScalingGroupName": {"Ref": "InstanceAsg"},
+        "MaxSize": {"Ref": "asgMaxCount"},
+        "MinSize": {"Ref": "asgMinCount"},
+        "DesiredCapacity": {"Ref": "asgDesiredCapacity"},
+        "Recurrence": "0 12 * * MON-FRI"
+      },
+      "DependsOn": "InstanceAsg"
+    },
+    "ScheduledActionDownTime": {
+      "Type": "AWS::AutoScaling::ScheduledAction",
+      "Description": "Scheduled downtime for the service",
+      "Properties": {
+        "AutoScalingGroupName": {"Ref": "InstanceAsg"},
+        "MaxSize": 0,
+        "MinSize": 0,
+        "DesiredCapacity": 0,
+        "Recurrence": "0 0 * * *"
+      },
+      "DependsOn": "InstanceAsg"
+    },
+
+    "DnsRecord": {
+      "Type": "AWS::Route53::RecordSet",
+      "Description": "DNS Record for the host name the Listener Rule is looking for",
+      "Properties": {
+        "Comment": {"Fn::Sub": "${envType} ${appName} DNS record"},
+        "HostedZoneId": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-HostedZoneExternal-Id"}},
+        "Name": {"Fn::Sub": ["edge-hotels.${domain}",
+          {"domain": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-HostedZoneExternal-Domain"}}}]},
+        "Type": "A",
+        "AliasTarget": {
+          "HostedZoneId": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-PublicAlbInstance-CanonicalHostedZoneID"}},
+          "DNSName": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-PublicAlbInstance-DNSName"}}
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,81 @@
+---
+
+# base variables
+host_purpose: smarthub-service
+host_environment: prod
+owning_group: mobile
+
+# splunk variables
+splunk_rpm_url: "s3://wex-mobile-devops/installers/splunk/splunkforwarder-6.6.3-e21ee54bc796-linux-2.6-x86_64.rpm"
+
+# sumologic variables
+sumologic_rpm_url: s3://wex-mobile-devops/installers/sumologic/SumoCollector-19.227-15.x86_64.rpm
+sumologic_access_id_param: prod.sumologic.accessid
+sumologic_access_key_param: prod.sumologic.accesskey
+sumologic_client_name: "{{host_purpose}}-{{host_environment}}"
+
+sumologic_sources:
+  bootstrap_source:
+    name: bootstrap
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/bootstrap"
+    pathExpression: "/var/log/bootstrap.log"
+  ansible_source:
+    name: ansible
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/ansible"
+    pathExpression: "/var/log/ansible.log"
+  app_source:
+    name: app
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/app"
+    pathExpression: "/var/log/{{host_purpose}}/app.log"
+  app_startup_source:
+    name: app-startup
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/app-startup"
+    pathExpression: "/var/log/app.log"
+
+# trendmicro variables
+trendmicro_provider: saas
+trendmicro_url: s3://wex-mobile-devops/installers/trendmicro/TrendMicro-Agent-amzn1-10.1.0-356.x86_64.rpm
+trendmicro_dsm_url: dsm://agents.deepsecurity.trendmicro.com:443/
+trendmicro_policy_id: 201
+trendmicro_tenant_id: prod.trendmicro.tenant-id
+trendmicro_token: prod.trendmicro.token
+
+# jdk variables
+jdk_rpm_url: "s3://wex-mobile-devops/installers/jdk/jdk-8u151-linux-x64.rpm"
+
+# nexus artifact variables
+nexus_artifacts:
+  wexonline-service:
+    version_env_var: "APP_VERSION"
+    group: "com.wex"
+    artifact: "smarthub-service"
+    downloaded_location: "/root/app.jar"
+
+# dynamic spring properties
+spring_props_file: "/root/application-{{host_environment}}.properties"
+spring_props_properties:
+  oauth-pub-key:
+    prop_name: "security.oauth2.resource.jwt.keyValue"
+    param_store: "yes"
+    encrypted: "no"
+    value: "prod.oauth.public-key"
+  oauth-client-secret:
+    prop_name: "security.oauth2.client.client-secret"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "prod.smarthubservice.client-secret"
+  db-password:
+    prop_name: "spring.datasource.hikari.password"
+    param_store: "yes"
+    encrypted: "yes"
+    value: "prod.smarthubservice.db-password"
+  database-dns:
+    prop_name: "spring.datasource.hikari.jdbc-url"
+    param_store: "no"
+    encrypted: "no"
+    value: "jdbc:postgresql://db-mg.prod2.intwexmobile.net:5432/mobile_gateway"
+  kafka-consumer-bootstrap-servers:
+    prop_name: "kafka.consumer.bootstrap"
+    param_store: "no"
+    encrypted: "no"
+    value: "kafka-bootstrap-1.prod2.intwexmobile.net:9092,kafka-bootstrap-2.prod2.intwexmobile.net:9092,kafka-bootstrap-3.prod2.intwexmobile.net:9092"

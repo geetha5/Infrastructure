@@ -1,0 +1,29 @@
+{
+  "RequestType": "Create",
+  "ServiceToken": "arn:aws:lambda:us-east-1:518554605247:function:cloud9-albListenerRedirect-albListenerRedirect-1F30S8SFKE8X4",
+  "ResponseURL": "https://cloudformation-custom-resource-response-useast1.s3.amazonaws.com/arn%3Aaws%3Acloudformation%3Aus-east-1%3A518554605247%3Astack/mwd-dev-mp-poc/3a610b50-e1ec-11e8-bbb4-50faeaabf0d1%7CListenerHttpsDefaultRule%7C7e96708a-f08f-4b26-a255-5f5f55e7aaad?AWSAccessKeyId=AKIAJBBWV6EJETUI7HUQ&Expires=1541709563&Signature=tp7pry%2F44G4dxcIlSVrM9oQ%2F2MU%3D",
+  "StackId": "arn:aws:cloudformation:us-east-1:518554605247:stack/mwd-dev-mp-poc/3a610b50-e1ec-11e8-bbb4-50faeaabf0d1",
+  "RequestId": "7e96708a-f08f-4b26-a255-5f5f55e7aaad",
+  "LogicalResourceId": "ListenerHttpsDefaultRule",
+  "ResourceType": "Custom::AlbListener",
+  "ResourceProperties": {
+    "ServiceToken": "arn:aws:lambda:us-east-1:518554605247:function:cloud9-albListenerRedirect-albListenerRedirect-1F30S8SFKE8X4",
+    "SslPolicy": "ELBSecurityPolicy-TLS-1-2-Ext-2018-06",
+    "LoadBalancerArn": "arn:aws:elasticloadbalancing:us-east-1:518554605247:loadbalancer/app/mwd-dev-mp-poc-public-alb/f0b2ec5a5fc86215",
+    "DefaultActions": [
+      {
+        "FixedResponseConfig": {
+          "StatusCode": "404"
+        },
+        "Type": "fixed-response"
+      }
+    ],
+    "Port": "443",
+    "Certificates": [
+      {
+        "CertificateArn": "arn:aws:acm:us-east-1:518554605247:certificate/a0dc5de5-5e53-428b-af74-0c52f1fde744"
+      }
+    ],
+    "Protocol": "HTTPS"
+  }
+}

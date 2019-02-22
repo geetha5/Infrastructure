@@ -1,0 +1,45 @@
+---
+
+# base variables
+host_purpose: salesforce-app
+host_environment: dev
+owning_group: mobile
+
+# splunk variables
+splunk_rpm_url: "s3://wex-mobile-devops/installers/splunk/splunkforwarder-6.6.3-e21ee54bc796-linux-2.6-x86_64.rpm"
+
+# sumologic variables
+sumologic_rpm_url: s3://wex-mobile-devops/installers/sumologic/SumoCollector-19.227-15.x86_64.rpm
+sumologic_access_id_param: dev.sumologic.accessid
+sumologic_access_key_param: dev.sumologic.accesskey
+sumologic_client_name: "{{host_purpose}}-{{host_environment}}"
+
+# trendmicro variables
+trendmicro_provider: saas
+trendmicro_url: s3://wex-mobile-devops/installers/trendmicro/TrendMicro-Agent-amzn1-10.1.0-356.x86_64.rpm
+trendmicro_dsm_url: dsm://agents.deepsecurity.trendmicro.com:443/
+trendmicro_policy_id: 201
+trendmicro_tenant_id: dev.trendmicro.tenant-id
+trendmicro_token: dev.trendmicro.token
+
+# php
+php_create_info_page: yes
+php_install_optional_packages: yes
+php_optional_packages:
+- php70-mysqlnd
+
+# nginx
+nginx_doc_group: ec2-user
+
+nginx_document_roots:
+- /var/www/html
+
+nginx_config_files:
+  root_config:
+    download_location: "s3://wex-mobile-devops/config/{{host_environment}}/nginx_configs/salesforce-dev-default.conf"
+    config_location: /etc/nginx/nginx.conf
+
+# dev server dns
+dev_server_create_dns: yes
+dev_server_dns_domain: dev.wexmobileauth.com
+dev_server_dns_name: salesforce-dev-server.dev.wexmobileauth.com

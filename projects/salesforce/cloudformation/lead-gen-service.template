@@ -1,0 +1,531 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "SalesForce Lead Generator Mobile Service",
+
+  "Parameters": {
+    "vpc": {
+      "Type": "AWS::EC2::VPC::Id",
+      "Description": "VPC to create resources under"
+    },
+    "accountStackName":{
+      "Type": "String",
+      "Description": "account stack name"
+    },
+    "platformStackName": {
+      "Type": "String",
+      "Description": "parent stack name"
+    },
+    "platformInstanceStackName": {
+      "Type": "String",
+      "Description": "instance stack name"
+    },
+    "envType": {
+      "Type": "String",
+      "Description": "designated environment type",
+      "Default": "dev",
+      "AllowedValues": ["dev", "stage", "prod"]
+    },
+    "instance": {
+      "Type": "String",
+      "Description": "unique short name for this Platform Instance, e.g. sit, dit",
+      "MinLength": 3,
+      "MaxLength": 10,
+      "AllowedPattern": "^[a-z][a-z0-9\\-]*$",
+      "ConstraintDescription": "Must start with a letter, only contain lower-case letters, '-', and/or numbers"
+    },
+    "privateSubnets": {
+      "Type": "List<AWS::EC2::Subnet::Id>",
+      "Description": "Private Subnets"
+    },
+    "publicSubnets": {
+      "Type": "List<AWS::EC2::Subnet::Id>",
+      "Description": "Public subnets"
+    },
+    "deploymentId": {
+      "Type": "String",
+      "Description": "The unique ID for the deployment"
+    },
+    "devopsBucket": {
+      "Description": "The bucket for devops related stuff",
+      "Type": "String",
+      "Default": "wex-mobile-devops"
+    },
+
+    "amiId": {
+      "Description": "The Ami id to use for instances",
+      "Type": "String"
+    },
+    "enableSSH": {
+      "Description": "Flag to add ssh key pair and security group to instances",
+      "Type": "String",
+      "Default": "no",
+      "AllowedValues": ["yes", "no"]
+    },
+    "instanceType": {
+      "Description": "The instance type to use",
+      "Type": "String"
+    },
+    "ec2KeyPair": {
+      "Description": "The instance keypair to use, this will only be used if enableSSH is yes, but must be passed",
+      "Type": "AWS::EC2::KeyPair::KeyName"
+    },
+
+    "desiredCapacity": {
+      "Description": "The number of instances that are desired",
+      "Type": "String",
+      "Default": "2"
+    },
+    "maxCount": {
+      "Description": "The max number of instances that can be in the ASG",
+      "Type": "String",
+      "Default": "4"
+    },
+    "minCount": {
+      "Description": "The min number of instances that can be in the ASG",
+      "Type": "String",
+      "Default": "0"
+    },
+    "asgServiceRoleName": {
+      "Description": "ServiceRole for the AutoScalingGroup with access to the KMS key for the EC2 instance",
+      "Type": "String"
+    },
+    "asgUpdateBatchSize": {
+      "Description": "The batch size of updates that are run by the ASG when doing a rolling deploy",
+      "Type": "String",
+      "Default": "1"
+    },
+    "sumoAgentVersion": {
+      "Description": "The version of the sumologic agent to use for bootstrapping",
+      "Type": "String",
+      "Default": "19.227-15"
+    },
+    "ansibleRoleVersion": {
+      "Description": "The version of the ansible roles to deploy",
+      "Type": "String"
+    },
+    "projectVersion": {
+      "Description": "The version of the salesforce  project to deploy",
+      "Type": "String"
+    },
+    "appVersion": {
+      "Description": "The app version to deploy",
+      "Type": "String"
+    }
+  },
+
+  "Conditions": {
+    "enableSSH": {"Fn::Equals": [{"Ref": "enableSSH"}, "yes"]},
+    "shouldCreateDevResources": {"Fn::Equals": [{"Ref": "envType"}, "dev"]},
+    "shouldCreateStageResources": {"Fn::Equals": [{"Ref": "envType"}, "stage"]},
+    "shouldCreateProdResources": {"Fn::Equals": [{"Ref": "envType"}, "prod"]}
+  },
+
+  "Resources": {
+    "TargetGroupPublicService": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Description": "TargetGroup for Public App elb",
+      "Properties": {
+        "Name": {"Fn::Sub": ["${prefix}-app-tg",
+          {"prefix": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-resource-prefix"}}}]},
+        "VpcId": {"Ref": "vpc"},
+        "HealthCheckIntervalSeconds": 10,
+        "HealthCheckPath": "/test.php",
+        "HealthCheckProtocol": "HTTP",
+        "HealthCheckPort": 80,
+        "HealthCheckTimeoutSeconds": 5,
+        "HealthyThresholdCount": 2,
+        "UnhealthyThresholdCount": 2,
+        "Port": 80,
+        "Protocol": "HTTP"
+      }
+    },
+    "ListenerRuleHttpsPublicService": {
+      "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+      "Description": "Listener Rule to connect TargetGroup to elb",
+      "Properties": {
+        "ListenerArn": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-ListenerHttps-Arn"}},
+        "Conditions": [{
+          "Field": "host-header",
+          "Values": [{"Fn::Sub": ["*.${domain}", {"domain": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-HostedZoneExternal-Domain"}}}]}]
+        }],
+        "Actions": [{"Type": "forward", "TargetGroupArn": {"Ref": "TargetGroupPublicService"}}],
+        "Priority": 1
+      },
+      "DependsOn": ["TargetGroupPublicService"]
+    },
+
+    "IamRoleInstance": {
+      "Type": "AWS::IAM::Role",
+      "Description": "IAM Role for ec2 instance to assume",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": [ "ec2.amazonaws.com"]},
+            "Action": [ "sts:AssumeRole"]
+          }]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "CloudWatch",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Resource": "*",
+                  "Action": [
+                    "autoscaling:Describe*",
+                    "cloudwatch:Describe*",
+                    "cloudwatch:List*",
+                    "cloudwatch:PutMetricAlarm*",
+                    "cloudwatch:PutMetricData",
+                    "cloudwatch:DeleteAlarms",
+                    "cloudwatch:Get*"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "CloudformationAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Action": "cloudformation:Describe*",
+                  "Effect": "Allow",
+                  "Resource": "*"
+                },
+                {
+                  "Action": "cloudformation:SignalResource",
+                  "Effect": "Allow",
+                  "Resource": {"Fn::Sub": "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*"}
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "ElbAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [{"Effect": "Allow", "Action": ["elasticloadbalancing:Describe*"], "Resource": "*"}]
+            }
+          },
+          {
+            "PolicyName": "Ec2Tagging",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Resource": "*",
+                "Action": [
+                  "ec2:CreateTags",
+                  "ec2:DeleteTags",
+                  "ec2:DescribeTags",
+                  "ec2:DescribeInstances"
+                ]
+              }]
+            }
+          },
+          {
+            "PolicyName": "ParameterStoreAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Action": "ssm:DescribeParameters",
+                  "Effect": "Allow",
+                  "Resource": "*"
+                },
+                {
+                  "Action": "kms:Decrypt",
+                  "Effect": "Allow",
+                  "Resource": {"Fn::ImportValue": {"Fn::Sub": "mobile-${envType}-vpc-ParameterStoreKmsKey-Arn"}}
+                },
+                {
+                  "Action": "ssm:GetParameter",
+                  "Effect": "Allow",
+                  "Resource": [
+                    {"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${envType}.sumologic.accessid"},
+                    {"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${envType}.sumologic.accesskey"},
+                    {"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${envType}.trendmicro.tenant-id"},
+                    {"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${envType}.trendmicro.token"},
+                    {"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${envType}.splunk.admin-password"}
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "SecretsManagerSecrets",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Action": "kms:Decrypt",
+                  "Effect": "Allow",
+                  "Resource": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-Secret-KmsKey-Arn"}}
+                },
+                {
+                  "Action": ["secretsmanager:Get*", "secretsmanager:DescribeSecret", "secretsmanager:List*"],
+                  "Effect": "Allow",
+                  "Resource": [
+                    {"Fn::Sub": "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${envType}/salesforce/*"},
+                    {"Fn::Sub": "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${envType}/stage/splunkforwarder"}
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "S3Access",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Action": ["s3:GetBucketLocation", "s3:ListAllMyBuckets"],
+                  "Effect": "Allow",
+                  "Resource": "arn:aws:s3:::*"
+                },
+                {
+                  "Action": ["s3:List*", "s3:HeadBucket", "s3:PutObject*"],
+                  "Effect": "Allow",
+                  "Resource": [
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}/system-reports"},
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}/system-reports/*"}
+                  ]
+                },
+                {
+                  "Action": ["s3:List*", "s3:GetObject"],
+                  "Effect": "Allow",
+                  "Resource": [
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}"},
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}/*"},
+                    "arn:aws:s3:::wex-mobile-artifacts",
+                    "arn:aws:s3:::wex-mobile-artifacts/*"
+                ]}
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "IamProfileInstance": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Description": "IAM Role Profile name",
+      "Properties": {
+        "InstanceProfileName": {"Fn::Sub": ["${prefix}-app-iam-profile", {"prefix": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-resource-prefix"}}}]},
+        "Path": "/",
+        "Roles": [{"Ref": "IamRoleInstance"}]
+      },
+      "DependsOn": ["IamRoleInstance"]
+    },
+
+    "SecGrpInstance": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Description": "Security Group for ec2 instances",
+      "Properties": {
+        "GroupName": {"Fn::Sub": ["${prefix}-app-sg", {"prefix": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-resource-prefix"}}}]},
+        "GroupDescription": {"Fn::Sub": "${envType} Salesforce App Instance Security Group"},
+        "VpcId": {"Ref": "vpc"},
+        "SecurityGroupIngress": [
+          {"IpProtocol": "tcp", "FromPort": 80, "ToPort": 80, "SourceSecurityGroupId": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-SecGrpPublicAlbInstance-Id"}}, "Description": "Inbound from Public App ELB"}],
+        "SecurityGroupEgress": [
+          {"IpProtocol": "tcp", "FromPort": 3306, "ToPort": 3306, "SourceSecurityGroupId": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-SecGrpRdsInstance-Id"}}, "Description": "Outbound to SalesForce RDS instances"},
+          {"IpProtocol": "-1", "FromPort": 0, "ToPort": 65535, "CidrIp": "0.0.0.0/0", "Description": "Outbound TCP to All (temp until Squid Proxy)"}
+        ],
+        "Tags": [
+          {"Key": "Name", "Value": {"Fn::Sub": ["${platform} - ${instance} - Lead Gen Service Instance", {"platform": {"Fn::ImportValue": {"Fn::Sub": "${platformStackName}-platform"}}}]}}
+        ]
+      }
+    },
+    "SecGrpIngressRdsFromInstance": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Description": "Add Ingress rule to allow ec2 instances to talk to rds instances",
+      "Properties": {
+        "IpProtocol": "tcp", "FromPort": 3306, "ToPort": 3306, "SourceSecurityGroupId": {"Ref": "SecGrpInstance"}, "Description": "Inbound from SalesForce Lead Gen Service",
+        "GroupId": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-SecGrpRdsInstance-Id"}}
+      },
+      "DependsOn": ["SecGrpInstance"]
+    },
+    "SecGrpEgressAlbToInstance": {
+      "Type": "AWS::EC2::SecurityGroupEgress",
+      "Description": "Add Egress rule to allow public alb to talk to ec2 instances",
+      "Properties": {
+        "IpProtocol": "tcp", "FromPort": 80, "ToPort": 80, "DestinationSecurityGroupId": {"Ref": "SecGrpInstance"}, "Description": "Public ALB communication to Lead Gen Application instances",
+        "GroupId": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-SecGrpPublicAlbInstance-Id"}}
+      },
+      "DependsOn": ["SecGrpInstance"]
+    },
+    "SecGrpIngressInstanceSshWexSoPo": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Description": "Optional (enableSSH) Add Ingress rule to always allow ssh traffic to ec2 instances",
+      "Properties": {
+        "IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "CidrIp": "10.78.0.0/15", "Description": "WEX SoPo VPN Traffic",
+        "GroupId": {"Ref": "SecGrpInstance"}
+      },
+      "Condition": "enableSSH",
+      "DependsOn": ["SecGrpInstance"]
+    },
+    "SecGrpIngressInstanceSshWexVpn": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Description": "Optional (enableSSH) Add Ingress rule to always allow ssh traffic to ec2 instances",
+      "Properties": {
+        "IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "CidrIp": "10.178.32.0/21", "Description": "WEX remoteaccess VPN Traffic",
+        "GroupId": {"Ref": "SecGrpInstance"}
+      },
+      "Condition": "enableSSH",
+      "DependsOn": ["SecGrpInstance"]
+    },
+
+    "LaunchConfig": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Description": "Launch Configuration for ec2 instances within the asg",
+      "Properties": {
+        "IamInstanceProfile": {"Ref": "IamProfileInstance"},
+        "ImageId": {"Ref": "amiId"},
+        "InstanceType": {"Ref": "instanceType"},
+        "SecurityGroups": [{"Ref": "SecGrpInstance"}],
+        "BlockDeviceMappings": [
+          {"DeviceName": "/dev/xvda", "Ebs": {"VolumeSize": "30", "VolumeType": "gp2", "DeleteOnTermination": true}}
+        ],
+        "KeyName": {"Fn::If": [ "enableSSH", {"Ref": "ec2KeyPair"}, {"Ref": "AWS::NoValue"}]},
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": ["", [
+              "#!/bin/bash\n",
+              "\n",
+              "# initialization variables\n",
+              "_devopsBucket=", {"Ref": "devopsBucket"}, "\n",
+              "_environment=", {"Ref": "envType"}, "\n",
+              "_region=", {"Ref": "AWS::Region"}, "\n",
+              "_appVersion=", {"Ref": "appVersion"}, "\n",
+              "_ansibleRoleVersion=", {"Ref": "ansibleRoleVersion"}, "\n",
+              "_projectVersion=", {"Ref": "projectVersion"}, "\n",
+              "_sumoAgentVersion=", {"Ref": "sumoAgentVersion"}, "\n",
+              "_albTargetGroupArn=", {"Ref": "TargetGroupPublicService"}, "\n",
+              "_stackName=", {"Ref": "AWS::StackName"}, "\n",
+              "_deploymentId=", {"Ref": "deploymentId"}, "\n",
+              "_appName=lead-gen-service\n",
+              "\n",
+              "# pull ansible scripts\n",
+              "mkdir /root/ansible_scripts\n",
+              "aws s3 cp s3://${_devopsBucket}/ansible/${_ansibleRoleVersion}/scripts /root/ansible_scripts --recursive --region ${_region}\n",
+              "chmod -R 700 /root/ansible_scripts\n",
+              "\n",
+              "# run bootstrap_logs\n",
+              "_sumoS3RpmUrl=\"s3://${_devopsBucket}/installers/sumologic/SumoCollector-${_sumoAgentVersion}.x86_64.rpm\"\n",
+              " chmod 700 /root/ansible_scripts/bootstrap_logs.sh && /root/ansible_scripts/bootstrap_logs.sh sumo ${_environment} ${_appName} salesforce ${_sumoS3RpmUrl}\n",
+              "\n",
+              "# pull ansible role archive\n",
+              "aws s3 cp s3://${_devopsBucket}/ansible/${_ansibleRoleVersion}/ansible_roles.zip /root/ansible_roles.zip --region ${_region}\n",
+              "\n",
+              "# run bootstrap\n",
+              "chmod 700 /root/ansible_scripts/bootstrap.sh && /root/ansible_scripts/bootstrap.sh | while IFS= read -r line; do echo \"$(date '+%Y-%m-%d %H:%M:%S') $line\"; done |& tee -a /var/log/bootstrap.log\n",
+              "\n",
+              "# deploy ansible roles\n",
+              "chmod 700 /root/ansible_scripts/deploy_roles.sh && /root/ansible_scripts/deploy_roles.sh /root/ansible_roles.zip | while IFS= read -r line; do echo \"$(date '+%Y-%m-%d %H:%M:%S') $line\"; done |& tee -a /var/log/bootstrap.log\n",
+              "\n",
+              "# pull playbooks\n",
+              "aws s3 cp s3://${_devopsBucket}/projects/salesforce/${_projectVersion}/ansible/playbooks/${_appName}/ /etc/ansible/ --recursive --region ${_region}\n",
+              "\n",
+              "# pull variable file\n",
+              "aws s3 cp s3://${_devopsBucket}/variables/${_environment}/ansible/salesforce/${_appName}.yml /etc/ansible/variables.yml --region ${_region}\n",
+              "\n",
+              "# run playbooks\n",
+              "APP_VERSION=${_appVersion} /usr/local/bin/ansible-playbook /etc/ansible/provision_playbook.yml\n",
+              "\n",
+              "# notify CloudFormation LoadBalancer to Add to target group\n",
+              "python /root/ansible_scripts/aws/cfn_lb_wait.py --lb-version v2 --target-group-arn ${_albTargetGroupArn} --instance-port 80 -e ${_environment} -s ${_stackName} --resource-id AutoScalingGroup\n",
+              "\n"
+            ]]
+          }
+        }
+      },
+      "DependsOn": ["IamProfileInstance", "SecGrpInstance"]
+    },
+    "AutoScalingGroup": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Description": "AutoscalingGroup for Lead Gen App",
+      "Properties": {
+        "DesiredCapacity": {"Ref": "desiredCapacity"},
+        "MaxSize": {"Ref": "maxCount"},
+        "MinSize": {"Ref": "minCount"},
+        "HealthCheckGracePeriod": 1000,
+        "HealthCheckType": "ELB",
+        "TerminationPolicies": [ "Default"],
+        "LaunchConfigurationName": {"Ref": "LaunchConfig"},
+        "ServiceLinkedRoleARN": {"Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/autoscaling.amazonaws.com/${asgServiceRoleName}"},
+        "TargetGroupARNs": [{"Ref": "TargetGroupPublicService"}],
+        "VPCZoneIdentifier": {"Ref": "privateSubnets"},
+        "Tags": [
+          {"Key": "!Runtime", "Value": "off=(n/a)", "PropagateAtLaunch": true},
+          {"Key": "!RuntimeASG", "Value": "off=(n/a)", "PropagateAtLaunch": false}
+        ]
+      },
+      "CreationPolicy": {
+        "ResourceSignal": {"Count": {"Ref": "desiredCapacity"}, "Timeout": "PT15M"}
+      },
+      "UpdatePolicy": {
+        "AutoScalingRollingUpdate": {
+          "MaxBatchSize": {"Ref": "asgUpdateBatchSize"},
+          "PauseTime": "PT15M",
+          "WaitOnResourceSignals": true
+        }
+      },
+      "DependsOn": ["LaunchConfig", "TargetGroupPublicService"]
+    },
+
+    "PartnerDNSRecords": {
+      "Type": "AWS::Route53::RecordSetGroup",
+      "Properties": {
+        "Comment": "Partner DNS records",
+        "HostedZoneId": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-HostedZoneExternal-Id"}},
+        "RecordSets": [{
+          "Name": {"Fn::Sub": ["citgo.${domain}",
+            {"domain": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-HostedZoneExternal-Domain"}}}]},
+          "Type": "A",
+          "AliasTarget": {
+            "HostedZoneId": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-PublicAlbInstance-CanonicalHostedZoneID"}},
+            "DNSName": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-PublicAlbInstance-DNSName"}}
+          }
+        }, {
+          "Name": {"Fn::Sub": ["esso.${domain}",
+            {"domain": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-HostedZoneExternal-Domain"}}}]},
+          "Type": "A",
+          "AliasTarget": {
+            "HostedZoneId": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-PublicAlbInstance-CanonicalHostedZoneID"}},
+            "DNSName": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-PublicAlbInstance-DNSName"}}
+          }
+        }, {
+          "Name": {"Fn::Sub": ["exxon.${domain}",
+            {"domain": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-HostedZoneExternal-Domain"}}}]},
+          "Type": "A",
+          "AliasTarget": {
+            "HostedZoneId": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-PublicAlbInstance-CanonicalHostedZoneID"}},
+            "DNSName": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-PublicAlbInstance-DNSName"}}
+          }
+        }, {
+          "Name": {"Fn::Sub": ["speedway.${domain}",
+            {"domain": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-HostedZoneExternal-Domain"}}}]},
+          "Type": "A",
+          "AliasTarget": {
+            "HostedZoneId": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-PublicAlbInstance-CanonicalHostedZoneID"}},
+            "DNSName": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-PublicAlbInstance-DNSName"}}
+          }
+        }, {
+          "Name": {"Fn::Sub": ["sunoco.${domain}",
+            {"domain": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-HostedZoneExternal-Domain"}}}]},
+          "Type": "A",
+          "AliasTarget": {
+            "HostedZoneId": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-PublicAlbInstance-CanonicalHostedZoneID"}},
+            "DNSName": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-PublicAlbInstance-DNSName"}}
+          }
+        }]
+      }
+    }
+  }
+}

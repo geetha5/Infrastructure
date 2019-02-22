@@ -1,0 +1,130 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "MWD Core - KMS Key Common",
+
+  "Parameters": {
+    "description": {
+      "Type": "String",
+      "Description": "KMS Key's Description",
+      "Default": "KMS key"
+    },
+    "env": {
+      "Type": "String",
+      "Description": "Account/Environment Type",
+      "AllowedValues": ["dev", "stage", "prod"]
+    },
+    "owner": {
+      "Type": "String",
+      "Description": "Short Name for the Line of Business or Owner.  e.g. 'mwd' for mobile web development",
+      "MinLength": 1,
+      "MaxLength": 6,
+      "AllowedPattern": "^[a-zA-Z0-9]*$",
+      "ConstraintDescription": "letters and numbers only, between 1 and 6 characters"
+    },
+    "service": {
+      "Type": "String",
+      "Description": "parent dns record",
+      "MinLength": 1,
+      "AllowedPattern": "^[a-zA-Z0-9_]*$",
+      "ConstraintDescription": "Service name must be letters, numbers, or '_'"
+    },
+    "allowAutoScaleGroup": {
+      "Type": "String",
+      "Description": "Account/Environment Type",
+      "AllowedValues": ["yes", "no"],
+      "Default": "no"
+    }
+  },
+
+  "Conditions": {
+    "allowASG": {"Fn::Equals": [{"Ref": "allowAutoScaleGroup"}, "yes"]}
+  },
+
+  "Resources": {
+    "KmsKey": {
+      "Type": "AWS::KMS::Key",
+      "Description": "KMS Key",
+      "Properties": {
+        "Description": {"Ref": "description"},
+        "Enabled": true,
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Id": {
+            "Fn::Sub": [
+              "${owner}-${env}-${region}-${service}-kms-key",
+              {"region": {"Fn::FindInMap": ["RegionMap", {"Ref": "AWS::Region"}, "name"]}}
+            ]
+          },
+          "Statement": [{
+            "Sid": "Enable IAM User Permissions",
+            "Effect": "Allow",
+            "Principal": {"AWS": {"Fn::Sub": "arn:aws:iam::${AWS::AccountId}:root"}},
+            "Action": "kms:*",
+            "Resource": "*"
+          },
+            {"Fn::If": [ "allowASG", {
+              "Sid": "Allow use of the CMK",
+              "Effect": "Allow",
+              "Principal": {"AWS": {"Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/autoscaling.amazonaws.com/AWSServiceRoleForAutoScaling"}},
+              "Action": ["kms:Encrypt", "kms:Decrypt", "kms:ReEncrypt*", "kms:GenerateDataKey*", "kms:DescribeKey"],
+              "Resource": "*"
+            }, {"Ref": "AWS::NoValue"}]}]
+        },
+        "Tags": [{
+          "Key": "Name",
+          "Value": {"Fn::Sub": ["alias/${owner}-${env}-${region}-${service}-kms-key",
+                                {"region": {"Fn::FindInMap": ["RegionMap", {"Ref": "AWS::Region"}, "name"]}}]}
+        }]
+      }
+    },
+    "KmsKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Description": "KMS Key Alias",
+      "Properties": {
+        "TargetKeyId": {"Ref": "KmsKey"},
+        "AliasName": {"Fn::Sub": ["alias/${owner}-${env}-${region}-${service}-kms-key",
+                                  {"region": {"Fn::FindInMap": ["RegionMap", {"Ref": "AWS::Region"}, "name"]}}]}
+      },
+      "DependsOn": "KmsKey"
+    }
+  },
+
+  "Outputs": {
+    "OutputKmsKeyId": {
+      "Description": "KMS key Id",
+      "Value": {"Ref": "KmsKey"}
+    },
+    "OutputKmsKeyArn": {
+      "Description": "KMS key ARN for",
+      "Value": {"Fn::Sub": "${KmsKey.Arn}"}
+    },
+    "OutputKmsKeyAlias": {
+      "Description": "KMS key Alias",
+      "Value": {"Ref": "KmsKeyAlias"}
+    }
+  },
+
+  "Mappings": {
+    "RegionMap": {
+      "us-east-1":      {"name": "ue1", "desc": "US East (N. Virginia) Region"},
+      "us-east-2":      {"name": "ue2", "desc": "US East (Ohio) Region"},
+      "us-west-1":      {"name": "uw1", "desc": "US West (N. California) Region"},
+      "us-west-2":      {"name": "uw2", "desc": "US West (Oregon) Region"},
+      "us-gov-west-1":  {"name": "ug1", "desc": "AWS GovCloud (US)"},
+      "ca-central-1":   {"name": "cc1", "desc": "Canada (Central) Region"},
+      "sa-east-1":      {"name": "se1", "desc": "South America (São Paulo) Region"},
+      "eu-west-1":      {"name": "ew1", "desc": "EU (Ireland) Region"},
+      "eu-west-2":      {"name": "ew2", "desc": "EU (London) Region"},
+      "eu-west-3":      {"name": "ew3", "desc": "EU (Paris) Region"},
+      "eu-central-1":   {"name": "ec1", "desc": "EU (Frankfurt) Region"},
+      "cn-north-1":     {"name": "cn1", "desc": "China (Beijing) Region"},
+      "ap-northeast-1": {"name": "an1", "desc": "Asia Pacific (Tokyo) Region"},
+      "ap-northeast-2": {"name": "an2", "desc": "Asia Pacific (Seoul) Region"},
+      "ap-northeast-3": {"name": "an3", "desc": "Asia Pacific (Osaka-Local) Region"},
+      "ap-south-1":     {"name": "as1", "desc": "Asia Pacific (Mumbai) Region"},
+      "ap-southeast-1": {"name": "ae1", "desc": "Asia Pacific (Singapore) Region"},
+      "ap-southeast-2": {"name": "ae2", "desc": "Asia Pacific (Sydney) Region"}
+    }
+  }
+}

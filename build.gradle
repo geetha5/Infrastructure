@@ -1,0 +1,277 @@
+import com.amazonaws.auth.*
+import com.amazonaws.auth.profile.ProfileCredentialsProvider
+import com.amazonaws.services.s3.*
+import com.amazonaws.services.s3.transfer.*
+import groovy.json.*
+
+buildscript {
+    ext {
+        awsVersion = '1.11.209'
+    }
+    repositories {
+        jcenter()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath "com.amazonaws:aws-java-sdk-core:${awsVersion}"
+        classpath "com.amazonaws:aws-java-sdk-s3:${awsVersion}"
+    }
+}
+
+ext {
+    configFile = project.hasProperty('configFile') ? project.property('configFile') : "none"
+    // aws credentials from the getAwsCredentials() lookup function
+    awsCredentials = getAwsCredentials()
+    // S3 Properties
+    s3Bucket = loadStringProp("s3Bucket", "wex-mwd-devops-dev")
+    s3Region = loadStringProp("s3Region", "us-east-1")
+    // git information
+    gitHash = 'git rev-parse HEAD'.execute().getText().trim()
+    gitBranch = 'git rev-parse --abbrev-ref HEAD'.execute().getText().trim()
+
+}
+
+// Functions //
+/**
+ * This will load properties from a json file if it is set and then
+ * from the typical gradle property source and then a default
+ * @param propertyName the name of the property in the config or prop file
+ * @param defaultValue the supplied default
+ * @return the property value from one of the option sources
+ */
+String loadStringProp(String propertyName, String defaultValue) {
+
+    logger.debug("configFile is ${configFile}")
+    // if the jsonConfig is present check there first
+    if (configFile != "none") {
+        logger.debug("JSON config file is present checking for property ${propertyName}")
+        Object json = new JsonSlurper().parseText(new File(configFile).text)
+        if (json.keySet().contains(propertyName)) {
+            logger.debug("Property: ${propertyName} found in JSON config file, setting to value")
+            return json[propertyName]
+        }
+        else {
+            logger.debug("Property: ${propertyName} not found in config checking properties or returning defualt")
+            String value = project.hasProperty(propertyName) ? project.property(propertyName) : defaultValue
+            return value
+        }
+    }
+    // else look for a property or return default
+    else {
+        logger.debug("JSON config file not passed, checking properties or returning default")
+        String value = project.hasProperty(propertyName) ? project.property(propertyName) : defaultValue
+        return value
+    }
+}
+
+/**
+ * This will load a boolean property from a json file if it is set and then
+ * from the typical gradle property source and then a default
+ * @param propertyName the name of the property in the config or prop file
+ * @param defaultValue the supplied default
+ * @return the property value from one of the option sources
+ */
+boolean loadBooleanProp(String propertyName, boolean defaultValue) {
+
+    logger.debug("configFile is ${configFile}")
+    // if the configFile is present check there first
+    if (configFile != "none") {
+        logger.debug("JSON config file is present checking for property ${propertyName}")
+        Object json = jsonSlurper().parseText(new File(configFile).text)
+        if (json.KeySet().contains(propertyName)) {
+            logger.debug("Property: ${propertyName} found in JSON config file, setting to value")
+            return json[propertyName]
+        }
+        else {
+            logger.debug("Property: ${propertyName} not found in config checking properties of returning defualt")
+            boolean value = project.hasProperty(propertyName) ? project.property(propertyName).toBoolean() : defaultValue
+            return value
+        }
+    }
+    else {
+        logger.debug("JSON config file not passed, checking properties or returning default for ${propertyName}")
+        boolean value = project.hasProperty(propertyName) ? project.property(propertyName).toBoolean() : defaultValue
+        return value
+    }
+}
+
+/**
+ * This will look up the latest build and return the
+ * timestamped dev build
+ * @param latestBuildFileS3Key the s3key of the latest build file
+ * @param tempDir the temporary directory to use as a staging area
+ * @return the latest dev build
+ */
+String getLatestBuild(String latestBuildFileS3Key, String tempDir) {
+
+    downloadFromS3(s3Bucket ,latestBuildFileS3Key, "${tempDir}/latest.txt", false)
+
+    String latestBuild = new File("${tempDir}/latest.txt").text.trim()
+    return latestBuild
+}
+
+/**
+ * This will upload a file or directory (will all contained files directories to s3).
+ * @param s3Bucket the s3bucket to upload to
+ * @param s3Key The S3 Key to upload to
+ * @param file The file or directory to upload
+ * @param isDir If a directory is being uploaded
+ * @return nothing
+ */
+void uploadToS3(String s3Bucket, String s3Key, String file, boolean isDir) {
+
+    TransferManager tm = getTransferManager()
+    Transfer transfer
+
+    // uploading a directory
+    try {
+        if (isDir) {
+            transfer = tm.uploadDirectory(s3Bucket, s3Key, new File(file), true)
+
+        } else {
+            transfer = tm.upload(s3Bucket, s3Key, new File(file))
+        }
+        transfer.waitForCompletion()
+
+    } catch (Exception e) {
+        logger.error(e)
+    }
+}
+
+/**
+ * This will delete a key from s3 this could be a directory or a file
+ * @param s3bucket the bucket to run the action on
+ * @param s3Key the s3 key to delete
+ * @return nothing
+ */
+void deleteS3Key(String s3Bucket, String s3Key) {
+
+    AmazonS3Client s3Client = getS3Client()
+
+    try {
+        s3Client.deleteObject(s3Bucket, s3Key)
+    }
+    catch (Exception e) {
+        logger.error(e)
+    }
+}
+
+/**
+ * This will download a file or directory from s3
+ * @param s3Bucket the s3 bucket to download from
+ * @param s3Key the s3 key to download
+ * @param localFile the location to download to
+ * @param isDir if the item to download is a directory
+ * @return nothing
+ */
+void downloadFromS3(String s3Bucket, String s3Key, String localFile, boolean isDir) {
+
+    TransferManager tm = getTransferManager()
+    Transfer transfer
+
+    try {
+        if (isDir) {
+            transfer = tm.downloadDirectory(s3Bucket, s3Key, new File(localFile))
+
+        } else {
+            transfer = tm.download(s3Bucket, s3Key, new File(localFile))
+        }
+
+        transfer.waitForCompletion()
+
+    } catch (Exception e) {
+        logger.error(e)
+    }
+}
+
+/**
+ * This will check if an object in s3 exists
+ * @param s3Bucket the s3 bucket to check
+ * @param s3Key the s3key to check
+ * @return boolean true if the key exists otherwise false
+ */
+boolean checkForS3Object(String s3Bucket, String s3Key) {
+
+    AmazonS3Client s3Client = getS3Client()
+
+    try {
+        return s3Client.doesObjectExist(s3Bucket, s3Key)
+    } catch (Exception e) {
+        logger.error(e)
+        return false
+    }
+}
+
+/**
+ * Helper function to get the S3Client from the provided credentials and provided region
+ * @return amazon s3 client instance
+ */
+AmazonS3Client getS3Client() {
+
+    AmazonS3Client s3Client = AmazonS3ClientBuilder.standard()
+            .withCredentials(new AWSStaticCredentialsProvider(awsCredentials))
+            .withRegion(s3Region)
+            .build()
+
+    return s3Client
+}
+
+/**
+ * Helper function to get the TransferManager from the S3Client
+ * @return TransferManager instance
+ */
+TransferManager getTransferManager() {
+
+    AmazonS3Client s3Client = getS3Client()
+
+    TransferManager tm = TransferManagerBuilder.standard()
+            .withS3Client(s3Client)
+            .build()
+
+    return tm
+}
+
+/**
+ * Getting AWS credentials from either a profile, passed as properties or
+ * by the default chain provider
+ * @return aws credentials
+ */
+AWSCredentials getAwsCredentials() {
+
+    // check for json config file for profile or keys
+    Object json
+    if (configFile != "none") {
+        logger.debug("JSON config file is present checking for profile or keys")
+        json = new JsonSlurper().parseText(new File(configFile).text)
+    }
+
+    /*
+       5 cases for getting credentials
+       1. if a profile name is specified in the json config file
+       2. if the accessKey and secretKey are in the json config file
+       3. if a profile name is specified in the properties file use creds from that profile
+       4. if the accessKey and secretKey are in the properties file use those credentials
+       5. used AWSs default credentials chain
+    */
+    if (configFile != "none" && json.keySet().contains("awsProfile")) {
+        logger.debug("loading profile from json config")
+        return new ProfileCredentialsProvider(json["awsProfile"]).getCredentials()
+    }
+    else if (configFile != "none" && (json.keySet().contains("awsAccessKey") && json.keySet().contains("awsSecretKey"))){
+        logger.debug("loading access and secret keys from json config")
+        return new BasicAWSCredentials(json["awsAccessKey"], json["awsSecretKey"])
+    }
+    else if (project.hasProperty("awsProfileName")) {
+        logger.debug("using the AWS credential profile provider")
+        return new ProfileCredentialsProvider(project.property("awsProfileName")).getCredentials()
+    }
+    else if (project.hasProperty("awsAccessKey") && project.hasProperty("awsSecretKey")) {
+        logger.debug("using the AWS credential basic provider")
+        return new BasicAWSCredentials(project.property("awsAccessKey"), project.property("awsSecretKey"))
+    }
+    else {
+        logger.debug("using the AWS default provider chain")
+        return new DefaultAWSCredentialsProviderChain().getCredentials()
+    }
+}

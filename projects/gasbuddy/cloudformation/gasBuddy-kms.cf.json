@@ -1,0 +1,203 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Gas Buddy KMS Stack",
+  "Parameters": {
+    "environment": {
+      "Type": "String",
+      "Description": "The environment for the stack"
+    },
+    "enableGasbuddy": {
+      "Type": "String",
+      "Description": "To create gasbuddy resources or not",
+      "AllowedValues": [
+        "yes",
+        "no"
+      ],
+      "Default": "yes"
+    }
+  },
+  "Conditions": {
+    "EnableGasbuddy": { "Fn::Equals": [ { "Ref": "enableGasbuddy" }, "yes" ] },
+    "DisableGasbuddy": { "Fn::Equals": [ { "Ref": "enableGasbuddy" }, "no" ] }
+  },
+  "Resources": {
+    "GasBuddyConsumerDlqKmsKey": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "Description": { "Fn::Join": [ " ", [ { "Ref": "environment" }, "gasbuddy consumer DLQ KMS key" ] ] },
+        "Enabled": true,
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Id": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "proxy-dlq-key" ] ] },
+          "Statement": [
+            {
+              "Sid": "Enable IAM User Permissions",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": { "Fn::Join": [ "", [ "arn:aws:iam::", { "Ref": "AWS::AccountId" }, ":root" ] ] } },
+              "Action": "kms:*",
+              "Resource": "*"
+            }
+          ]
+        }
+      },
+      "Condition": "EnableGasbuddy"
+    },
+    "GasBuddyConsumerDlqKmsKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": { "Fn::Join": [ "", [ "alias/", { "Ref": "environment" }, "-", "gasbuddy-consumer-dlq-key" ] ] },
+        "TargetKeyId": { "Ref": "GasBuddyConsumerDlqKmsKey" }
+      },
+      "Condition": "EnableGasbuddy"
+    },
+    "AuthStreamKmsKey": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "Description": { "Fn::Join": [ " ", [ { "Ref": "environment" }, "WEX Auth Stream KMS Key" ] ] },
+        "Enabled": true,
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Id": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "wex-auth-stream-key" ] ] },
+          "Statement": [
+            {
+              "Sid": "Enable IAM User Permissions",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": { "Fn::Join": [ "", [ "arn:aws:iam::", { "Ref": "AWS::AccountId" }, ":root" ] ] } },
+              "Action": "kms:*",
+              "Resource": "*"
+            }
+          ]
+        }
+      }
+    },
+    "AuthStreamKmsKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": { "Fn::Join": [ "", [ "alias/", { "Ref": "environment" }, "-", "wex-auth-stream-key" ] ] },
+        "TargetKeyId": { "Ref": "AuthStreamKmsKey" }
+      }
+    },
+    "GasBuddyStreamKmsKey": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "Description": { "Fn::Join": [ " ", [ { "Ref": "environment" }, "GasBuddy Stream KMS Key" ] ] },
+        "Enabled": true,
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Id": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "gasbuddy-stream-key" ] ] },
+          "Statement": [
+            {
+              "Sid": "Enable IAM User Permissions",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": { "Fn::Join": [ "", [ "arn:aws:iam::", { "Ref": "AWS::AccountId" }, ":root" ] ] } },
+              "Action": "kms:*",
+              "Resource": "*"
+            }
+          ]
+        }
+      },
+      "Condition": "EnableGasbuddy"
+    },
+    "GasBuddyStreamKmsKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": { "Fn::Join": [ "", [ "alias/", { "Ref": "environment" }, "-", "gasbuddy-stream-key" ] ] },
+        "TargetKeyId": { "Ref": "GasBuddyStreamKmsKey" }
+      },
+      "Condition": "EnableGasbuddy"
+    },
+    "AuthProxyDlqKmsKey": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "Description": { "Fn::Join": [ " ", [ { "Ref": "environment" }, "auth proxy DLQ KMS key" ] ] },
+        "Enabled": true,
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Id": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "proxy-dlq-key" ] ] },
+          "Statement": [
+            {
+              "Sid": "Enable IAM User Permissions",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": { "Fn::Join": [ "", [ "arn:aws:iam::", { "Ref": "AWS::AccountId" }, ":root" ] ] } },
+              "Action": "kms:*",
+              "Resource": "*"
+            }
+          ]
+        }
+      }
+    },
+    "AuthProxyDlqKmsKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": { "Fn::Join": [ "", [ "alias/", { "Ref": "environment" }, "-", "auth-proxy-dlq-key" ] ] },
+        "TargetKeyId": { "Ref": "AuthProxyDlqKmsKey" }
+      }
+    }
+  },
+  "Outputs": {
+    "OutputProxyDlqKmsId": {
+      "Description": "The KMS ID of the proxy DLQ",
+      "Value": { "Ref": "AuthProxyDlqKmsKey" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-AuthProxyDlqKmsKey-Id" }
+      }
+    },
+    "OutputProxyDlqKmsArn": {
+      "Description": "The KMS Arn of the proxy DLQ",
+      "Value": { "Fn::GetAtt": [ "AuthProxyDlqKmsKey", "Arn" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-AuthProxyDlqKmsKey-Arn" }
+      }
+    },
+    "OutputGasBuddyConsumerDlqKmsId": {
+      "Description": "The KMS ID of the gas buddy consumer DLQ",
+      "Value": { "Fn::If": [ "EnableGasbuddy", { "Ref": "GasBuddyConsumerDlqKmsKey" }, "N/A" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-GasBuddyConsumerDlqKmsKey-Id" }
+      }
+    },
+    "OutputGasBuddyConsumerDlqKmsArn": {
+      "Description": "The KMS Arn of the gas buddy consumer DLQ",
+      "Value": { "Fn::If": [ "EnableGasbuddy", { "Fn::GetAtt": [ "GasBuddyConsumerDlqKmsKey", "Arn" ] }, "N/A" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-GasBuddyConsumerDlqKmsKey-Arn" }
+      }
+    },
+    "OutputAuthKinesisKmsId": {
+      "Description": "The KMS ID of the Auth Kinesis Stream",
+      "Value": { "Ref": "AuthStreamKmsKey" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-AuthStreamKmsKey-Id" }
+      }
+    },
+    "OutputAuthKinesisKmsArn": {
+      "Description": "The KMS Arn of the Auth Kinesis Stream",
+      "Value": { "Fn::GetAtt": [ "AuthStreamKmsKey", "Arn" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-AuthStreamKmsKey-Arn" }
+      }
+    },
+    "OutputGasBuddyKinesisKmsId": {
+      "Description": "The KMS ID of the GasBuddy Output Kinesis",
+      "Value": { "Fn::If": [ "EnableGasbuddy", { "Ref": "GasBuddyStreamKmsKey" }, "N/A" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-GasBuddyStreamKmsKey-Id" }
+      }
+    },
+    "OutputGasBuddyKinesisKmsArn": {
+      "Description": "The KMS Arn of the GasBuddy Output Kinesis",
+      "Value": { "Fn::If": [ "EnableGasbuddy", { "Fn::GetAtt": [ "GasBuddyStreamKmsKey", "Arn" ] }, "N/A" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-GasBuddyStreamKmsKey-Arn" }
+      }
+    }
+  }
+}

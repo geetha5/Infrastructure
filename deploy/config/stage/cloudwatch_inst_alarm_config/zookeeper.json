@@ -1,0 +1,100 @@
+{
+  "Alarms": [
+    {
+      "Name": "memory",
+      "Enabled": true,
+      "MetricName": "mem_used_percent",
+      "Unit": "Percent",
+      "Threshold": 80.0,
+      "Period": 10,
+      "ComparisonOperator": "GreaterThanThreshold",
+      "Namespace": "CWAgent",
+      "EvaluationPeriods": 3,
+      "Statistic": "Maximum",
+      "SnsTopics": [ "arn:aws:sns:us-east-1:518554605247:mobile-dev-vpc-DevopsAlertSns-19ZHSRCSTBKKP" ],
+      "Dimensions": [
+        {
+          "Name": "InstanceId",
+          "Value": "N/A"
+        }
+      ]
+    },
+    {
+      "Name": "cpu-system",
+      "Enabled": true,
+      "MetricName": "cpu_usage_system",
+      "Unit": "Percent",
+      "Threshold": 80.0,
+      "Period": 10,
+      "ComparisonOperator": "GreaterThanThreshold",
+      "Namespace": "CWAgent",
+      "EvaluationPeriods": 2,
+      "Statistic": "Average",
+      "SnsTopics": [ "arn:aws:sns:us-east-1:518554605247:mobile-dev-vpc-DevopsAlertSns-19ZHSRCSTBKKP" ],
+      "Dimensions": [
+        {
+          "Name": "InstanceId",
+          "Value": "N/A"
+        },
+        {
+          "Name": "cpu",
+          "Value": "cpu-total"
+        }
+      ]
+    },
+    {
+      "Name": "cpu-user",
+      "Enabled": true,
+      "MetricName": "cpu_usage_user",
+      "Unit": "Percent",
+      "Threshold": 80.0,
+      "Period": 10,
+      "ComparisonOperator": "GreaterThanThreshold",
+      "Namespace": "CWAgent",
+      "EvaluationPeriods": 2,
+      "Statistic": "Average",
+      "SnsTopics": [ "arn:aws:sns:us-east-1:518554605247:mobile-dev-vpc-DevopsAlertSns-19ZHSRCSTBKKP" ],
+      "Dimensions": [
+        {
+          "Name": "InstanceId",
+          "Value": "N/A"
+        },
+        {
+          "Name": "cpu",
+          "Value": "cpu-total"
+        }
+      ]
+    },
+    {
+      "Name": "disk-used-/",
+      "Enabled": true,
+      "MetricName": "disk_used_percent",
+      "Unit": "Percent",
+      "Threshold": 80.0,
+      "ComparisonOperator": "GreaterThanThreshold",
+      "Period": 60,
+      "Namespace": "CWAgent",
+      "EvaluationPeriods": 1,
+      "Statistic": "Average",
+      "Dimensions": [
+        {
+          "Name": "device",
+          "Value": "xvda1"
+        },
+        {
+          "Name": "fstype",
+          "Value": "ext4"
+        },
+        {
+          "Name": "path",
+          "Value": "/"
+        },
+        {
+          "Name": "InstanceId",
+          "Value": "N/A"
+        }
+      ],
+      "SnsTopics": [ "arn:aws:sns:us-east-1:518554605247:mobile-dev-vpc-DevopsAlertSns-19ZHSRCSTBKKP" ]
+    }
+  ]
+}

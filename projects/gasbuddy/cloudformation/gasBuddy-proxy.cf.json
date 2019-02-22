@@ -1,0 +1,648 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Auth Proxy Stack",
+  "Parameters": {
+    "environment": {
+      "Type": "String",
+      "Description": "The environment for the stack",
+      "Default": "dev"
+    },
+    "vpcStackName": {
+      "Type": "String",
+      "Description": "The stack name of the VPC stack for cross stack references"
+    },
+    "kinesisStackName": {
+      "Type": "String",
+      "Description": "The stack name of the auth kinesis stack for references"
+    },
+    "kafkaStackName": {
+      "Type": "String",
+      "Description": "The stack name for the kafka cluster"
+    },
+    "kmsStackName": {
+      "Type": "String",
+      "Description": "The stack name of the kms key for gasbuddy for references"
+    },
+    "apaAuthorizerCidr": {
+      "Type": "String",
+      "Description": "The CIDR of the authorizer servers in APA"
+    },
+    "pwmAuthorizerCidr": {
+      "Type": "String",
+      "Description": "The CIDR of the authorizer servers in PWM"
+    },
+    "acmCertArn": {
+      "Type": "String",
+      "Description": "The Arn of the ACM certificate"
+    },
+    "asgServiceRoleName": {
+      "Description": "ServiceRole for the AutoScalingGroup with access to the KMS key for the EC2 instance",
+      "Type": "String"
+    },
+    "proxyDesiredCount": {
+      "Type": "Number",
+      "Description": "The desired number of proxy servers in the ASG",
+      "Default": "4"
+    },
+    "proxyMinCount": {
+      "Type": "Number",
+      "Description": "The min number of proxy instances",
+      "Default": "2"
+    },
+    "proxyMaxCount": {
+      "Type": "Number",
+      "Description": "The max number of proxy servers, must be larger then desired",
+      "Default": "8"
+    },
+    "instanceKeyPair": {
+      "Type": "String",
+      "Description": "The ssh keypair for the instances"
+    },
+    "proxyInstanceType": {
+      "Type": "String",
+      "Description": "The instance type of the proxy instances",
+      "Default": "t3.small"
+    },
+    "amiId": {
+      "Type": "String",
+      "Description": "This is the id of the ami"
+    },
+    "aesKeyParameterName": {
+      "Type": "String",
+      "Description": "The param key used for auth encryption key"
+    },
+    "devopsBucket": {
+      "Type": "String",
+      "Description": "The DevOps bucket",
+      "Default": "wex-mobile-devops"
+    },
+    "artifactsBucket": {
+      "Type": "String",
+      "Description": "The Artifacts bucket",
+      "Default": "wex-mobile-artifacts"
+    },
+    "enableSsh": {
+      "Type": "String",
+      "Description": "If to enable ssh on instances",
+      "Default": "no",
+      "AllowedValues": [
+        "yes",
+        "no"
+      ]
+    },
+    "ansibleVersion": {
+      "Type": "String",
+      "Description": "This is the version of ansible to deploy"
+    },
+    "proxyVersion": {
+      "Type": "String",
+      "Description": "The version of the proxy to deploy"
+    },
+    "gasBuddyProjectVersion": {
+      "Type": "String",
+      "Description": "The version of the gasbuddy project to deploy"
+    },
+    "proxyAsgUpdateBatchSize": {
+      "Type": "Number",
+      "Description": "The update batch size for the asg",
+      "Default": "2"
+    },
+    "sumoAgentVersion": {
+      "Description": "The version of the sumologic agent to use for bootstrapping",
+      "Type": "String",
+      "Default": "19.227-15"
+    },
+    "deploymentId": {
+      "Description": "The Id of the deployment",
+      "Type": "String"
+    },
+    "hostedZoneId": {
+      "Description": "The hosted zone for dns zone",
+      "Type": "String"
+    },
+    "dnsName": {
+      "Description": "The DNS name for the auth-proxy",
+      "Type": "String"
+    }
+  },
+
+  "Mappings": {
+    "SharedEnvMap": {
+      "dit": {"baseEnv": "dev"},
+      "dev": {"baseEnv": "dev"},
+      "stage": {"baseEnv": "stage"},
+      "stage-transys": {"baseEnv": "stage"},
+      "prod": {"baseEnv": "prod"}
+    }
+  },
+
+  "Conditions": {
+    "EnableSsh": {"Fn::Equals": [{"Ref": "enableSsh"}, "yes"]},
+    "NonProd": {"Fn::Not": [{"Fn::Equals": [{"Ref": "environment"}, "prod"]}]},
+    "EnableKafka": {"Fn::Not": [{"Fn::Equals": [{"Ref": "kafkaStackName"}, "none"]}]}
+  },
+
+  "Resources": {
+    "ProxyDlqSqs": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "FifoQueue": true,
+        "MessageRetentionPeriod": "1209600",
+        "KmsMasterKeyId": {"Fn::ImportValue": {"Fn::Sub": "${kmsStackName}-AuthProxyDlqKmsKey-Id"}}
+      }
+    },
+    "ProxyAlbSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupName": {"Fn::Sub": "${environment}-Auth-Proxy-ALB-SG"},
+        "GroupDescription": {"Fn::Sub": "${environment} Auth Proxy ALB Security Group"},
+        "VpcId": {"Fn::ImportValue": {"Fn::Sub": "${vpcStackName}-Vpc-Id"}},
+        "SecurityGroupIngress": [
+          {"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "CidrIp": {"Ref": "apaAuthorizerCidr"}},
+          {"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "CidrIp": {"Ref": "pwmAuthorizerCidr"}}
+        ]
+      }
+    },
+    "ProxyNonProd78NetIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Condition": "NonProd",
+      "Properties": {
+        "GroupId": {"Ref": "ProxyAlbSecurityGroup"}, "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "CidrIp": "10.78.0.0/16"
+      }
+    },
+    "ProxyNonProd79NetIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Condition": "NonProd",
+      "Properties": {
+        "GroupId": {"Ref": "ProxyAlbSecurityGroup"}, "IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "CidrIp": "10.79.0.0/16"
+      }
+    },
+    "ProxyAlb": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "Properties": {
+        "Type": "application",
+        "Scheme": "internal",
+        "SecurityGroups": [{"Ref": "ProxyAlbSecurityGroup"}],
+        "Name": {"Fn::Sub": "${environment}-Auth-Proxy-ALB"},
+        "Subnets": [
+          {"Fn::ImportValue": {"Fn::Sub": "${vpcStackName}-PrivateSubnetA-Id"}},
+          {"Fn::ImportValue": {"Fn::Sub": "${vpcStackName}-PrivateSubnetB-Id"}}
+        ],
+        "Tags": [
+          {"Key": "Purpose", "Value": "AuthProxy"},
+          {"Key": "Environment", "Value": {"Ref": "environment"}}
+        ]
+      }
+    },
+    "ProxyAlbTargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "Name": {"Fn::Sub": "${environment}-Auth-Proxy-ALB-TG"},
+        "HealthCheckIntervalSeconds": 10,
+        "HealthCheckPath": "/admin/health",
+        "HealthCheckProtocol": "HTTP",
+        "HealthCheckPort": 6666,
+        "HealthCheckTimeoutSeconds": 5,
+        "HealthyThresholdCount": 2,
+        "UnhealthyThresholdCount": 2,
+        "Port": 5000,
+        "Protocol": "HTTP",
+        "VpcId": {"Fn::ImportValue": {"Fn::Sub": "${vpcStackName}-Vpc-Id"}},
+        "Tags": [
+          {"Key": "Purpose", "Value": "AuthProxy"},
+          {"Key": "Environment", "Value": {"Ref": "environment"}}
+        ]
+      }
+    },
+    "ProxyAlbListener": {
+      "Type": "AWS::ElasticLoadBalancingV2::Listener",
+      "Properties": {
+        "Certificates": [{"CertificateArn": {"Ref": "acmCertArn"}}],
+        "DefaultActions": [
+          {"Type": "forward", "TargetGroupArn": {"Ref": "ProxyAlbTargetGroup"}}
+        ],
+        "LoadBalancerArn": {"Ref": "ProxyAlb"},
+        "Port": "443",
+        "Protocol": "HTTPS"
+      },
+      "DependsOn": ["ProxyAlb", "ProxyAlbTargetGroup"]
+    },
+    "ProxyAlbListenerRule": {
+      "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+      "Properties": {
+        "Actions": [
+          {"Type": "forward", "TargetGroupArn": {"Ref": "ProxyAlbTargetGroup"}}
+        ],
+        "Conditions": [
+          {"Field": "path-pattern", "Values": ["/"]}
+        ],
+        "ListenerArn": {"Ref": "ProxyAlbListener"},
+        "Priority": 1
+      },
+      "DependsOn": ["ProxyAlbListener", "ProxyAlbTargetGroup"]
+    },
+    "ProxyIamRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {
+              "Service": ["ec2.amazonaws.com"]
+            },
+            "Action": ["sts:AssumeRole"]
+          }]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "ListAllStreams",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [{"Effect": "Allow", "Action": "kinesis:ListStream", "Resource": "*"}]
+          	}
+          },
+          {
+            "PolicyName": "AuthStream-Put",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {"Effect": "Allow", "Action": "kms:GenerateDataKey", "Resource": {"Fn::ImportValue": {"Fn::Sub": "${kmsStackName}-AuthStreamKmsKey-Arn"}}},
+                {
+                  "Effect": "Allow",
+                  "Action": ["kinesis:Describe*", "kinesis:PutRecords"],
+                  "Resource": {"Fn::ImportValue": {"Fn::Sub": "${kinesisStackName}-AuthStream-Arn"}}
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "ParameterStoreAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {"Effect": "Allow", "Action": "ssm:DescribeParameters", "Resource": "*"},
+                {
+                  "Effect": "Allow",
+                  "Action": ["ssm:GetParameter", "ssm:GetParameters"],
+                  "Resource": [
+                    {"Fn::Join": ["", ["arn:aws:ssm:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":parameter/", {"Ref": "aesKeyParameterName"}]]},
+                    {"Fn::Join": ["", ["arn:aws:ssm:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":parameter/", {"Fn::FindInMap": ["SharedEnvMap", {"Ref": "environment"}, "baseEnv"]}, ".sumologic.accessid"]]},
+                    {"Fn::Join": ["", ["arn:aws:ssm:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":parameter/", {"Fn::FindInMap": ["SharedEnvMap", {"Ref": "environment"}, "baseEnv"]}, ".sumologic.accesskey"]]},
+                    {"Fn::Join": ["", ["arn:aws:ssm:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":parameter/", {"Fn::FindInMap": ["SharedEnvMap", {"Ref": "environment"}, "baseEnv"]}, ".trendmicro.tenant-id"]]},
+                    {"Fn::Join": ["", ["arn:aws:ssm:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":parameter/", {"Fn::FindInMap": ["SharedEnvMap", {"Ref": "environment"}, "baseEnv"]}, ".trendmicro.token"]]},
+                    {"Fn::Join": ["", ["arn:aws:ssm:", {"Ref": "AWS::Region"}, ":", {"Ref": "AWS::AccountId"}, ":parameter/", {"Fn::FindInMap": ["SharedEnvMap", {"Ref": "environment"}, "baseEnv"]}, ".splunk.admin-password"]]}
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "kms:Decrypt",
+                  "Resource": {"Fn::ImportValue": {"Fn::Sub": "${vpcStackName}-ParameterStoreKmsKey-Arn"}}
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "CloudformationAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "cloudformation:Describe*",
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "cloudformation:SignalResource",
+                  "Resource": {"Fn::Sub": "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*"}
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "ElbAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {"Effect": "Allow", "Action": ["elasticloadbalancing:Describe*"], "Resource": "*"}
+              ]
+            }
+          },
+          {
+            "PolicyName": "Ec2Tagging",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {"Effect": "Allow", "Action": ["ec2:CreateTags", "ec2:DeleteTags", "ec2:DescribeTags", "ec2:DescribeInstances"], "Resource": "*"}
+              ]
+            }
+          },
+          {
+            "PolicyName": "S3Access",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Action": ["s3:GetBucketLocation", "s3:ListAllMyBuckets"],
+                  "Effect": "Allow",
+                  "Resource": "arn:aws:s3:::*"
+                },
+                {
+                  "Action": ["s3:List*", "s3:HeadBucket", "s3:PutObject*"],
+                  "Effect": "Allow",
+                  "Resource": [
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}/system-reports/${environment}"},
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}/system-reports/${environment}/*"}
+                  ]
+                },
+                {
+                  "Action": ["s3:List*", "s3:GetObject"],
+                  "Effect": "Allow",
+                  "Resource": [
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}"}, {"Fn::Sub": "arn:aws:s3:::${devopsBucket}/*"},
+                    {"Fn::Sub": "arn:aws:s3:::${artifactsBucket}"}, {"Fn::Sub": "arn:aws:s3:::${artifactsBucket}/*"}
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "CloudWatch",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "autoscaling:Describe*",
+                    "cloudwatch:Describe*",
+                    "cloudwatch:List*",
+                    "cloudwatch:PutMetricAlarm*",
+                    "cloudwatch:PutMetricData",
+                    "cloudwatch:DeleteAlarms",
+                    "cloudwatch:Get*"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "CloudwatchLogs",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents",
+                    "logs:DescribeLogStreams"
+                  ],
+                  "Resource": "arn:aws:logs:*:*:*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "DlqAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "sqs:ListQueues",
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "sqs:Get*",
+                    "sqs:RecieveMessage",
+                    "sqs:DeleteMessage*",
+                    "sqs:SendMessage",
+                    "sqs:Change*"
+                  ],
+                  "Resource": {"Fn::GetAtt": ["ProxyDlqSqs", "Arn"]}
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "kms:GenerateDataKey",
+                    "kms:Decrypt"
+                  ],
+                  "Resource": {"Fn::ImportValue": {"Fn::Sub": "${kmsStackName}-AuthProxyDlqKmsKey-Arn"}}
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ProxyIamInstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "InstanceProfileName": {"Fn::Sub": "${environment}-Auth-Proxy-IAM-Profile"},
+        "Path": "/",
+        "Roles": [{"Ref": "ProxyIamRole"}]
+      }
+    },
+    "ProxyInstanceSG": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupName": {"Fn::Sub": "${environment}-Auth-Proxy-SG"},
+        "GroupDescription": {"Fn::Sub": "${environment} Auth Proxy Instance Security Group"},
+        "VpcId": {"Fn::ImportValue": {"Fn::Sub": "${vpcStackName}-Vpc-Id"}},
+        "SecurityGroupIngress": [
+          {
+            "SourceSecurityGroupId": {"Ref": "ProxyAlbSecurityGroup"},
+            "IpProtocol": "tcp",
+            "FromPort": 5000,
+            "ToPort": 5000
+          },
+          {
+            "SourceSecurityGroupId": {"Ref": "ProxyAlbSecurityGroup"},
+            "IpProtocol": "tcp",
+            "FromPort": 6666,
+            "ToPort": 6666
+          }
+        ]
+      }
+    },
+    "ProxySshDev78NetIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Condition": "EnableSsh",
+      "Properties": {
+        "GroupId": {"Ref": "ProxyInstanceSG"},
+        "IpProtocol": "tcp",
+        "FromPort": 22,
+        "ToPort": 22,
+        "CidrIp": "10.78.0.0/16"
+      }
+    },
+    "ProxySshDev79NetIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Condition": "EnableSsh",
+      "Properties": {
+        "GroupId": {"Ref": "ProxyInstanceSG"},
+        "IpProtocol": "tcp",
+        "FromPort": 22,
+        "ToPort": 22,
+        "CidrIp": "10.79.0.0/16"
+      }
+    },
+    "ProxyAsg": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "Cooldown": "300",
+        "DesiredCapacity": {"Ref": "proxyDesiredCount"},
+        "MaxSize": {"Ref": "proxyMaxCount"},
+        "MinSize": {"Ref": "proxyMinCount"},
+        "HealthCheckGracePeriod": 800,
+        "HealthCheckType": "ELB",
+        "TerminationPolicies": ["Default"],
+        "LaunchConfigurationName": {"Ref": "ProxyLc"},
+        "ServiceLinkedRoleARN": {"Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/autoscaling.amazonaws.com/${asgServiceRoleName}"},
+        "TargetGroupARNs": [{"Ref": "ProxyAlbTargetGroup"}],
+        "VPCZoneIdentifier": [
+          {"Fn::ImportValue": {"Fn::Sub": "${vpcStackName}-PrivateSubnetA-Id"}},
+          {"Fn::ImportValue": {"Fn::Sub": "${vpcStackName}-PrivateSubnetB-Id"}}
+        ]
+      },
+      "DependsOn": ["ProxyLc"],
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Count": {"Ref": "proxyDesiredCount"},
+          "Timeout": "PT25M"
+        }
+      },
+      "UpdatePolicy": {
+        "AutoScalingRollingUpdate": {
+          "MaxBatchSize": {"Ref": "proxyAsgUpdateBatchSize"},
+          "MinInstancesInService": {"Ref": "proxyMinCount"},
+          "PauseTime": "PT15M",
+          "WaitOnResourceSignals": true
+        }
+      }
+    },
+    "ProxyLc": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Properties": {
+        "IamInstanceProfile": {"Ref": "ProxyIamInstanceProfile"},
+        "ImageId": {"Ref": "amiId"},
+        "InstanceType": {"Ref": "proxyInstanceType"},
+        "SecurityGroups": [{"Ref": "ProxyInstanceSG"},
+          {"Fn::If": ["EnableKafka", {"Fn::ImportValue": {"Fn::Sub": "${kafkaStackName}-KafkaIngressSg-Id"}}, {"Ref": "AWS::NoValue"}]}],
+        "BlockDeviceMappings": [
+          {"DeviceName": "/dev/xvda", "Ebs": {"DeleteOnTermination": true, "VolumeSize": "30", "VolumeType": "gp2"}}
+        ],
+        "KeyName": {"Fn::If": ["EnableSsh", {"Ref": "instanceKeyPair"}, {"Ref": "AWS::NoValue"}]},
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash\n",
+                "\n",
+                "# initialization variables\n",
+                "_artifactsBucket=", {"Ref": "artifactsBucket"}, "\n",
+                "_devopsBucket=", {"Ref": "devopsBucket"}, "\n",
+                "_ansibleVersion=", {"Ref": "ansibleVersion"}, "\n",
+                "_proxyVersion=", {"Ref": "proxyVersion"}, "\n",
+                "_gasBuddyVersion=", {"Ref": "gasBuddyProjectVersion"}, "\n",
+                "_aesKeyParam=", {"Ref": "aesKeyParameterName"}, "\n",
+                "_environment=", {"Ref": "environment"}, "\n",
+                "_proxyDlqUrl=", {"Ref": "ProxyDlqSqs"}, "\n",
+                "_sumoAgentVersion=", {"Ref": "sumoAgentVersion"}, "\n",
+                "_region=", {"Ref": "AWS::Region"}, "\n",
+                "_albTargetGroupArn=", {"Ref": "ProxyAlbTargetGroup"}, "\n",
+                "_deploymentId=", {"Ref": "deploymentId"}, "\n",
+                "_authStreamName=", {"Fn::ImportValue": {"Fn::Sub": "${kinesisStackName}-AuthStream-Name"}}, "\n",
+                "_stackName=", {"Ref": "AWS::StackName"}, "\n",
+                "\n",
+                "# pull ansible scripts\n",
+                "mkdir /root/ansible_scripts\n",
+                "aws s3 cp s3://${_devopsBucket}/ansible/${_ansibleVersion}/scripts /root/ansible_scripts --recursive --region ${_region}\n",
+                "chmod -R 700 /root/ansible_scripts\n",
+                "\n",
+                "# run bootstrap_logs\n",
+                "_sumoS3RpmUrl=\"s3://wex-mobile-devops/installers/sumologic/SumoCollector-${_sumoAgentVersion}.x86_64.rpm\"\n",
+                "chmod 700 /root/ansible_scripts/bootstrap_logs.sh && /root/ansible_scripts/bootstrap_logs.sh ",
+                "sumo ${_environment} auth-proxy mobile ${_sumoS3RpmUrl}\n",
+                "\n",
+                "# pull ansible role archive\n",
+                "aws s3 cp s3://${_devopsBucket}/ansible/${_ansibleVersion}/ansible_roles.zip /root/ansible_roles.zip --region ${_region}\n",
+                "\n",
+                "# run bootstrap\n",
+                "chmod 700 /root/ansible_scripts/bootstrap.sh && /root/ansible_scripts/bootstrap.sh | while IFS= read -r line; do echo \"$(date '+%Y-%m-%d %H:%M:%S') $line\"; done |& tee -a /var/log/bootstrap.log\n",
+                "\n",
+                "# deploy ansible roles\n",
+                "chmod 700 /root/ansible_scripts/deploy_roles.sh && /root/ansible_scripts/deploy_roles.sh /root/ansible_roles.zip | while IFS= read -r line; do echo \"$(date '+%Y-%m-%d %H:%M:%S') $line\"; done |& tee -a /var/log/bootstrap.log\n",
+                "\n",
+                "# pull playbooks\n",
+                "aws s3 cp s3://${_devopsBucket}/projects/gasbuddy/${_gasBuddyVersion}/ansible/playbooks/auth-proxy/ /etc/ansible/ --recursive --region ${_region}\n",
+                "\n",
+                "# pull variable file\n",
+                "aws s3 cp s3://${_devopsBucket}/variables/${_environment}/ansible/gasbuddy/auth-proxy.yml /etc/ansible/variables.yml --region ${_region}\n",
+                "\n",
+                "# run playbooks\n",
+                "APP_VERSION=${_proxyVersion} /usr/local/bin/ansible-playbook /etc/ansible/provision_playbook.yml\n",
+                "\n",
+                "# run proxy app jar\n",
+                "sudo ln -s /root/app.jar /etc/init.d/app\n",
+                "sudo /etc/init.d/app start --spring.profiles.active=${_environment} --aesKeyName=${_aesKeyParam} ",
+                "--sqs.dlq-url=${_proxyDlqUrl}\n",
+                "\n",
+                "# Run CFN wait\n",
+                "python /root/ansible_scripts/aws/cfn_lb_wait.py --lb-version v2 --target-group-arn ${_albTargetGroupArn} ",
+                "--instance-port 5000 -e ${_environment} -s ${_stackName} --resource-id ProxyAsg"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "DnsRecord": {
+      "Type": "AWS::Route53::RecordSet",
+      "Properties": {
+        "HostedZoneId": {"Ref": "hostedZoneId"},
+        "Comment": {"Fn::Sub": "${environment} auth-proxy DNS record"},
+        "Name": {"Ref": "dnsName"},
+        "Type": "CNAME",
+        "TTL": 300,
+        "ResourceRecords": [{"Fn::GetAtt": ["ProxyAlb", "DNSName"]}]
+      }
+    }
+  },
+
+  "Outputs": {
+    "OutputProxyDlqUrl": {
+      "Description": "The URL of the proxy DLQ",
+      "Value": {"Ref": "ProxyDlqSqs"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-ProxyDlqSqs-Url"}}
+    },
+    "OutputProxyDlqArn": {
+      "Description": "The Arn of the proxy DLQ",
+      "Value": {"Fn::GetAtt": ["ProxyDlqSqs", "Arn"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-ProxyDlqSqs-Arn"}}
+    },
+    "OutputProxyDlqName": {
+      "Description": "The Name of the proxy DLQ",
+      "Value": {"Fn::GetAtt": ["ProxyDlqSqs", "QueueName"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-ProxyDlqSqs-Name"}}
+    },
+    "OutputProxyNlbArn": {
+      "Description": "The Arn of the proxy Alb",
+      "Value": {"Ref": "ProxyAlb"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-ProxyAlb-Arn"}}
+    },
+    "OutputProxyNlbName": {
+      "Description": "The Name of the proxy ALB",
+      "Value": {"Fn::GetAtt": ["ProxyAlb", "LoadBalancerName"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-ProxyAlb-Name"}}
+    }
+  }
+}

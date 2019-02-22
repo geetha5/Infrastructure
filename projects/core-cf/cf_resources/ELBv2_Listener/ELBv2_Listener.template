@@ -1,0 +1,83 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Create ELBv2 Listener with support all listener rule types",
+
+  "Parameters": {
+    "s3Bucket": {
+      "Type": "String",
+      "Description": "DevOps Bucket containing Core CloudFormation Scripts"
+    },
+    "s3Key": {
+      "Type": "String",
+      "Description": "Location of the lambda code"
+    },
+    "kmsKeyAlias": {
+      "Type": "String",
+      "Description": "KMS Key for encrypting env variables"
+    }
+  },
+
+  "Resources": {
+    "ELBv2ListenerRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "ManagedPolicyArns": ["arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"],
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Action": ["sts:AssumeRole"],
+            "Effect": "Allow",
+            "Principal": {"Service": ["lambda.amazonaws.com"]}
+          }]
+        },
+        "Path": "/",
+        "Policies": [{
+          "PolicyName": "ElasticLoadBalancer",
+          "PolicyDocument": {
+            "Version": "2012-10-17",
+            "Statement": [{
+              "Effect": "Allow",
+              "Action": "elasticloadbalancing:*",
+              "Resource": [
+                "arn:aws:elasticloadbalancing:*:*:listener-rule/app/*/*/*/*",
+                "arn:aws:elasticloadbalancing:*:*:listener/*/*/*"
+              ]
+            }, {
+              "Effect": "Allow",
+              "Action": "elasticloadbalancing:*",
+              "Resource": "*"
+            }]
+          }
+        }]
+      }
+    },
+    "ELBv2ListenerLambda": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Code": {
+          "S3Bucket": {"Ref": "s3Bucket"},
+          "S3Key": {"Fn::Sub": "${s3Key}_lambda.zip"}},
+        "Description": "Wrapper for ELBv2 Listener",
+        "FunctionName": "ELBv2ListenerCustom",
+        "MemorySize": 128,
+        "Handler": "index.handler",
+        "KmsKeyArn": {"Ref": "kmsKeyAlias"},
+        "Role": {"Fn::GetAtt": ["ELBv2ListenerRole", "Arn"]},
+        "Timeout": 15,
+        "Runtime": "nodejs8.10"
+      }
+    }
+  },
+
+  "Outputs": {
+    "OutputELBv2ListenerLambdaName": {
+      "Description": "arn for the lambda",
+      "Value": {"Ref": "ELBv2ListenerLambda"}
+    },
+    "OutputELBv2ListenerLambdaArn": {
+      "Description": "arn for the lambda",
+      "Value": {"Fn::GetAtt": ["ELBv2ListenerLambda", "Arn"]}
+    }
+
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Some Template Description Here",
+  "Parameters": {
+    "environment": {
+      "Description": "The environment of the stack",
+      "Type": "String"
+    }
+  },
+  "Resources": {
+    "BusinessUsersMobileGatewaySnsTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "DisplayName": { "Fn::Join": [ "-", [ "mg", { "Ref": "environment" } ] ] },
+        "Subscription": [
+          {
+            "Endpoint": "matthew.durgin@wexinc.com",
+            "Protocol": "email"
+          },
+          {
+            "Endpoint": "dotty.collins@wexinc.com",
+            "Protocol": "email"
+          }
+        ],
+        "TopicName": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "mg-business-notifications" ] ] }
+      }
+    },
+    "DeveloperUserMobileGatewaySnsTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "DisplayName": { "Fn::Join": [ "-", [ "mg", { "Ref": "environment" } ] ] },
+        "Subscription": [
+          {
+            "Endpoint": "MobileAppSupport@wexinc.com",
+            "Protocol": "email"
+          }
+        ],
+        "TopicName": { "Fn::Join": [ "-",  [ { "Ref": "environment" }, "mg-dev-notifications" ] ] }
+      }
+    }
+  },
+  "Outputs": {
+    "OutputMgDevTopicName": {
+      "Description": "The topic name for the mobile gateway dev notifications",
+      "Value": { "Fn::GetAtt": [ "DeveloperUserMobileGatewaySnsTopic", "TopicName" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-MgDevTopic-Name" }
+      }
+    },
+    "OutputMgDevTopicArn": {
+      "Description": "The topic arn for the mobile gateway dev notifications",
+      "Value": { "Ref": "DeveloperUserMobileGatewaySnsTopic" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-MgDevTopic-Arn" }
+      }
+    },
+    "OutputMgBusinessTopicName": {
+      "Description": "The topic name for the mobile gateway business notifications",
+      "Value": { "Fn::GetAtt": [ "BusinessUsersMobileGatewaySnsTopic", "TopicName" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-MgBusTopic-Name" }
+      }
+    },
+    "OutputMgBusinessTopicArn": {
+      "Description": "The topic arn for the mobile gateway business notifications",
+      "Value": { "Ref": "BusinessUsersMobileGatewaySnsTopic" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-MgBusTopic-Arn" }
+      }
+    }
+  }
+}

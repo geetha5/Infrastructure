@@ -1,0 +1,530 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "MWD Core - Account Resources",
+
+  "Parameters": {
+    "s3Url": {
+      "Type": "String",
+      "Description": "DevOps Bucket containing Core CloudFormation Scripts"
+    },
+    "s3Bucket": {
+      "Type": "String",
+      "Description": "DevOps Bucket containing Core CloudFormation Scripts"
+    },
+    "coreCfPath": {
+      "Type": "String",
+      "Description": "DevOps Bucket containing Core CloudFormation Scripts"
+    },
+    "lineOfBusiness": {
+      "Type": "String",
+      "Description": "short name",
+      "MinLength": 3,
+      "MaxLength": 20,
+      "Default": "mwd",
+      "AllowedPattern": "^[a-z][a-z\\-]*$",
+      "ConstraintDescription": "Account name must start with a letter can only contain lower-case letters and dashes"
+    },
+    "envType": {
+      "Type": "String",
+      "Description": "designated environment type",
+      "Default": "dev",
+      "AllowedValues": ["dev", "stage", "prod"]
+    },
+    "vpc": {
+      "Type": "AWS::EC2::VPC::Id",
+      "Description": "VPC to create resources under"
+    },
+    "snsDevOpsEmail": {
+      "Type": "String",
+      "Description": "Email address to send alert notifications to",
+      "AllowedPattern": "(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|\"(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21\\x23-\\x5b\\x5d-\\x7f]|\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])*\")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\\[(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?|[a-z0-9-]*[a-z0-9]:(?:[\\x01-\\x08\\x0b\\x0c\\x0e-\\x1f\\x21-\\x5a\\x53-\\x7f]|\\\\[\\x01-\\x09\\x0b\\x0c\\x0e-\\x7f])+)\\])",
+      "ConstraintDescription": "Please enter a valid email address"
+    }
+  },
+
+  "Conditions": {
+    "shouldCreateDevResources": {"Fn::Equals": [{"Ref": "envType"}, "dev"]},
+    "shouldCreateStageResources": {"Fn::Equals": [{"Ref": "envType"}, "stage"]},
+    "shouldCreateProdResources": {"Fn::Equals": [{"Ref": "envType"}, "prod"]}
+  },
+
+  "Resources": {
+    "SnsDevOpsAlert": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "DisplayName": {"Fn::Sub": "${lineOfBusiness}-${envType}-${AWS::Region}-SnsDevOpsAlert"}
+      }
+    },
+    "SnsSubscriptionDevOpsAlert": {
+      "Type": "AWS::SNS::Subscription",
+      "Description": "Email Subscription for receiving SNS email alerts",
+      "Properties": {
+        "Protocol": "email",
+        "Endpoint": {"Ref": "snsDevOpsEmail"},
+        "TopicArn": {"Ref": "SnsDevOpsAlert"}
+      },
+      "DependsOn": "SnsDevOpsAlert"
+    },
+
+    "Ec2KmsKey": {
+      "Type": "AWS::CloudFormation::Stack",
+      "Description": "EC2 KMS Key Nested Stack",
+      "Properties": {
+        "TemplateURL": {"Fn::Sub": "${s3Url}/${coreCfPath}/KmsKey.template"},
+        "NotificationARNs": [{"Ref": "SnsDevOpsAlert"}],
+        "Parameters": {
+          "service": "EC2",
+          "description": "EC2 KMS Key",
+          "env": {"Ref": "envType"},
+          "owner": {"Fn::Sub": "${lineOfBusiness}"},
+          "allowAutoScaleGroup": "yes"
+        }
+      }
+    },
+    "LambdaKmsKey": {
+      "Type": "AWS::CloudFormation::Stack",
+      "Description": "Lambda KMS Key Nest Stack",
+      "Properties": {
+        "TemplateURL": {"Fn::Sub": "${s3Url}/${coreCfPath}/KmsKey.template"},
+        "NotificationARNs": [{"Ref": "SnsDevOpsAlert"}],
+        "Parameters": {
+          "description": "Lambda KMS Key for encrypted environment variables",
+          "env": {"Ref": "envType"},
+          "owner": {"Fn::Sub": "${lineOfBusiness}"},
+          "service": "lambda"
+        }
+      }
+    },
+    "ParameterKmsKey": {
+      "Type": "AWS::CloudFormation::Stack",
+      "Description": "Parameter Store KMS Key Nested Stack",
+      "Properties": {
+        "TemplateURL": {"Fn::Sub": "${s3Url}/${coreCfPath}/KmsKey.template"},
+        "NotificationARNs": [{"Ref": "SnsDevOpsAlert"}],
+        "Parameters": {
+          "description": "Parameter Store KMS Key",
+          "env": {"Ref": "envType"},
+          "owner": {"Fn::Sub": "${lineOfBusiness}"},
+          "service": "Parameter"
+        }
+      }
+    },
+    "RdsKmsKey": {
+      "Type": "AWS::CloudFormation::Stack",
+      "Properties": {
+        "TemplateURL": {"Fn::Sub": "${s3Url}/${coreCfPath}/KmsKey.template"},
+        "NotificationARNs": [{"Ref": "SnsDevOpsAlert"}],
+        "Parameters": {
+          "description": "RDS KMS Key",
+          "env": {"Ref": "envType"},
+          "owner": {"Fn::Sub": "${lineOfBusiness}"},
+          "service": "RDS"
+        }
+      }
+    },
+    "S3KmsKey": {
+      "Type": "AWS::CloudFormation::Stack",
+      "Description": "S3 Bucket KMS Key Nest Stack",
+      "Properties": {
+        "TemplateURL": {"Fn::Sub": "${s3Url}/${coreCfPath}/KmsKey.template"},
+        "NotificationARNs": [{"Ref": "SnsDevOpsAlert"}],
+        "Parameters": {
+          "description": "S3 Bucket KMS Key",
+          "env": {"Ref": "envType"},
+          "owner": {"Fn::Sub": "${lineOfBusiness}"},
+          "service": "S3"
+        }
+      }
+    },
+    "SecretKmsKey": {
+      "Type": "AWS::CloudFormation::Stack",
+      "Description": "SecretsManager Secret KMS Key Nest Stack",
+      "Properties": {
+        "TemplateURL": {"Fn::Sub": "${s3Url}/${coreCfPath}/KmsKey.template"},
+        "NotificationARNs": [{"Ref": "SnsDevOpsAlert"}],
+        "Parameters": {
+          "description": "SecretsManager Secret Store KMS Key",
+          "env": {"Ref": "envType"},
+          "owner": {"Fn::Sub": "${lineOfBusiness}"},
+          "service": "Secret"
+        }
+      }
+    },
+    "SnsKmsKey": {
+      "Type": "AWS::CloudFormation::Stack",
+      "Description": "SNS KMS Key Nest Stack",
+      "Properties": {
+        "TemplateURL": {"Fn::Sub": "${s3Url}/${coreCfPath}/KmsKey.template"},
+        "NotificationARNs": [{"Ref": "SnsDevOpsAlert"}],
+        "Parameters": {
+          "description": "SNS Store KMS Key",
+          "env": {"Ref": "envType"},
+          "owner": {"Fn::Sub": "${lineOfBusiness}"},
+          "service": "sns"
+        }
+      }
+    },
+
+    "cfELBv2Listener": {
+      "Type": "AWS::CloudFormation::Stack",
+      "Description": "Custom CloudFormation Resource to wrap ELB Listeners",
+      "Properties": {
+        "TemplateURL": {"Fn::Sub": "${s3Url}/${coreCfPath}/cf_resources/ELBv2_Listener/ELBv2_Listener.template"},
+        "NotificationARNs": [{"Ref": "SnsDevOpsAlert"}],
+        "Parameters": {
+          "s3Bucket": {"Ref": "s3Bucket"},
+          "s3Key": {"Fn::Sub": "${coreCfPath}/cf_resources/ELBv2_Listener"},
+          "kmsKeyAlias": {"Fn::GetAtt": ["LambdaKmsKey", "Outputs.OutputKmsKeyArn"]}
+        }
+      },
+      "DependsOn": ["LambdaKmsKey"]
+    },
+
+    "S3AppLoggingBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Description": "S3 Bucket for Application Logs",
+      "Properties": {
+        "BucketName": {"Fn::Sub": "${lineOfBusiness}-${envType}-app-logging"},
+        "AccessControl": "LogDeliveryWrite",
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [{
+            "ServerSideEncryptionByDefault": {
+              "KMSMasterKeyID": {"Fn::GetAtt": ["S3KmsKey", "Outputs.OutputKmsKeyAlias"]},
+              "SSEAlgorithm": "aws:kms"
+            }
+          }]
+        }
+      },
+      "DependsOn": "S3KmsKey"
+    },
+    "S3AppLoggingBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "DependsOn": "S3AppLoggingBucket",
+      "Properties": {
+        "Bucket": {"Ref": "S3AppLoggingBucket"},
+        "PolicyDocument": {
+          "Statement": [{
+            "Sid": "AllowEc2InstancesToWriteLogs",
+            "Action": ["s3:List*", "s3:PutObject"],
+            "Effect": "Allow",
+            "Resource": {"Fn::Sub": "${S3AppLoggingBucket.Arn}/*"},
+            "Principal": {
+              "Service": [
+                {"Fn::Sub": "ec2.${AWS::URLSuffix}"},
+                {"Fn::Sub": "elasticloadbalancing.${AWS::URLSuffix}"}]
+            }
+          }, {
+            "Sid": "DenyUnEncryptedObjectUploads",
+            "Action": "s3:PutObject",
+            "Effect": "Deny",
+            "Principal": "*",
+            "Resource": {"Fn::Sub": "arn:aws:s3:::${S3AppLoggingBucket}/*"},
+            "Condition": {"StringNotEquals": {"s3:x-amz-server-side-encryption": "aws:kms"}}
+          }]
+        }
+      }
+    },
+
+    "SecGrpSsh": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Description": "Allow SSH access to *nix based EC2 Instances from WEX Corporate Network",
+      "Properties": {
+        "VpcId": {"Ref": "vpc"},
+        "GroupDescription": "Instances needing SSH access from WEX Corporate",
+        "GroupName": {"Fn::Sub": "${lineOfBusiness}-${envType}-account-ssh-ingress-sg"},
+        "SecurityGroupIngress": {"Fn::FindInMap": ["ssh", {"Ref": "envType"}, "SecurityGroupIngress"]},
+        "SecurityGroupEgress": {"Fn::FindInMap": ["ssh", {"Ref": "envType"}, "SecurityGroupEgress"]},
+        "Tags": [
+          {"Key": "Name", "Value": "Account - Service - SSH Ingress"}
+        ]
+      }
+    },
+    "SecGrpRdp": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Description": "Allow RDP access to Windows based EC2 Instance from WEX Corporate Network",
+      "Properties": {
+        "VpcId": {"Ref": "vpc"},
+        "GroupDescription": "Instances needing RDP access from WEX Corporate",
+        "GroupName": {"Fn::Sub": "${lineOfBusiness}-${envType}-account-rdp-ingress-sg"},
+        "SecurityGroupIngress": {"Fn::FindInMap": ["rdp", {"Ref": "envType"}, "SecurityGroupIngress"]},
+        "SecurityGroupEgress": {"Fn::FindInMap": ["rdp", {"Ref": "envType"}, "SecurityGroupEgress"]},
+        "Tags": [
+          {"Key": "Name", "Value": "Account - Service - RDP Ingress"}
+        ]
+      }
+    },
+    "SecGrpNetworkReachability": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Description": "Allow ICMP based network diagnostics from WEX Corporate Network and related networks of same env type",
+      "Properties": {
+        "VpcId": {"Ref": "vpc"},
+        "GroupDescription": "Instances needing ICMP access (ping, traceroute, etc.) enabled from WEX Corporate and/or related networks of the same env type",
+        "GroupName": {"Fn::Sub": "${lineOfBusiness}-${envType}-account-network-reachability-sg"},
+        "SecurityGroupIngress": {"Fn::FindInMap": ["networkReachability", {"Ref": "envType"}, "SecurityGroupIngress"]},
+        "SecurityGroupEgress": {"Fn::FindInMap": ["networkReachability", {"Ref": "envType"}, "SecurityGroupEgress"]},
+        "Tags": [
+          {"Key": "Name", "Value": "Account - Service - Network Reachability"}
+        ]
+      }
+    }
+  },
+
+  "Outputs": {
+    "OutputSnsDevOpsAlertArn": {
+      "Description": "The Arn of the DevOps alert SNS topic",
+      "Value": {"Ref": "SnsDevOpsAlert"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-SnsDevOpsAlert-Arn"}}
+    },
+    "OutputS3AppLoggingBucketName": {
+      "Description": "The bucket name of the S3AppLoggingBucket Bucket",
+      "Value": {"Ref": "S3AppLoggingBucket"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-S3AppLoggingBucket-Name"}}
+    },
+    "OutputS3AppLoggingBucketArn": {
+      "Description": "The Arn of the S3AppLoggingBucket Bucket",
+      "Value": {"Fn::GetAtt": ["S3AppLoggingBucket", "Arn"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-S3AppLoggingBucket-Arn"}}
+    },
+    "OutputS3AppLoggingBucketDomain": {
+      "Description": "The direct Hostname of the S3AppLoggingBucket Bucket",
+      "Value": {"Fn::GetAtt": ["S3AppLoggingBucket", "DomainName"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-S3AppLoggingBucket-DomainName"}}
+    },
+
+    "OutputSecGrpSsh": {
+      "Description": "Security Group for granting SSH Access",
+      "Value": {"Ref": "SecGrpSsh"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-SecGrpSsh-Id"}}
+    },
+    "OutputSecGrpRdp": {
+      "Description": "Security Group for granting RDP Access",
+      "Value": {"Ref": "SecGrpRdp"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-SecGrpRdp-Id"}}
+    },
+    "OutputSecGrpNetworkReachability": {
+      "Description": "Security Group for enabling Network Reachability Diagnostics",
+      "Value": {"Ref": "SecGrpNetworkReachability"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-SecGrpNetworkReachability-Id"}}
+    },
+
+    "OutputELBv2ListenerLambda": {
+      "Description": "Lambda to create Listeners with all options",
+      "Value": {"Fn::GetAtt": ["cfELBv2Listener", "Outputs.OutputELBv2ListenerLambdaArn"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-cfELBv2Listener-Arn"}}
+    },
+
+    "OutputEc2KmsKeyId": {
+      "Description": "EC2 KMS Key Id",
+      "Value": {"Fn::GetAtt": ["Ec2KmsKey", "Outputs.OutputKmsKeyId"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-EC2-KmsKey-Id"}}
+    },
+    "OutputEc2KmsKeyAlias": {
+      "Description": "EC2 KMS Key Alias",
+      "Value": {"Fn::GetAtt": ["Ec2KmsKey", "Outputs.OutputKmsKeyAlias"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-EC2-KmsKey-Alias"}}
+    },
+    "OutputEc2KmsKeyArn": {
+      "Description": "RDS EC2 Key Arn",
+      "Value": {"Fn::GetAtt": ["Ec2KmsKey", "Outputs.OutputKmsKeyArn"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-EC2-KmsKey-Arn"}}
+    },
+
+    "OutputParameterKmsKeyId": {
+      "Description": "Parameter Store KMS Key Id",
+      "Value": {"Fn::GetAtt": ["ParameterKmsKey", "Outputs.OutputKmsKeyId"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-Parameter-KmsKey-Id"}}
+    },
+    "OutputParameterKmsKeyAlias": {
+      "Description": "Parameter Store KMS Key Alias",
+      "Value": {"Fn::GetAtt": ["ParameterKmsKey", "Outputs.OutputKmsKeyAlias"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-Parameter-KmsKey-Alias"}}
+    },
+    "OutputParameterKmsKeyArn": {
+      "Description": "Parameter Store Key Arn",
+      "Value": {"Fn::GetAtt": ["ParameterKmsKey", "Outputs.OutputKmsKeyArn"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-Parameter-KmsKey-Arn"}}
+    },
+
+    "OutputLambdaKmsKeyId": {
+      "Description": "Lambda KMS Key Id",
+      "Value": {"Fn::GetAtt": ["LambdaKmsKey", "Outputs.OutputKmsKeyId"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-Lambda-KmsKey-Id"}}
+    },
+    "OutputLambdaKmsKeyAlias": {
+      "Description": "Lambda KMS Key Alias",
+      "Value": {"Fn::GetAtt": ["LambdaKmsKey", "Outputs.OutputKmsKeyAlias"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-Lambda-KmsKey-Alias"}}
+    },
+    "OutputLambdaKmsKeyArn": {
+      "Description": "Lambda Key Arn",
+      "Value": {"Fn::GetAtt": ["LambdaKmsKey", "Outputs.OutputKmsKeyArn"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-Lambda-KmsKey-Arn"}}
+    },
+
+    "OutputRdsKmsKeyId": {
+      "Description": "RDS KMS Key Id",
+      "Value": {"Fn::GetAtt": ["RdsKmsKey", "Outputs.OutputKmsKeyId"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-RDS-KmsKey-Id"}}
+    },
+    "OutputRdsKmsKeyAlias": {
+      "Description": "RDS KMS Key Alias",
+      "Value": {"Fn::GetAtt": ["RdsKmsKey", "Outputs.OutputKmsKeyAlias"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-RDS-KmsKey-Alias"}}
+    },
+    "OutputRdsKmsKeyArn": {
+      "Description": "RDS KMS Key Arn",
+      "Value": {"Fn::GetAtt": ["RdsKmsKey", "Outputs.OutputKmsKeyArn"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-RDS-KmsKey-Arn"}}
+    },
+
+    "OutputS3KmsKeyId": {
+      "Description": "S3 KMS Key Id",
+      "Value": {"Fn::GetAtt": ["S3KmsKey", "Outputs.OutputKmsKeyId"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-S3-KmsKey-Id"}}
+    },
+    "OutputS3KmsKeyAlias": {
+      "Description": "S3 KMS Key Alias",
+      "Value": {"Fn::GetAtt": ["S3KmsKey", "Outputs.OutputKmsKeyAlias"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-S3-KmsKey-Alias"}}
+    },
+    "OutputS3KmsKeyArn": {
+      "Description": "S3 KMS Key Arn",
+      "Value": {"Fn::GetAtt": ["S3KmsKey", "Outputs.OutputKmsKeyArn"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-S3-KmsKey-Arn"}}
+    },
+
+    "OutputSecretKmsKeyId": {
+      "Description": "Secrets Manager Secret KMS Key Id",
+      "Value": {"Fn::GetAtt": ["SecretKmsKey", "Outputs.OutputKmsKeyId"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-Secret-KmsKey-Id"}}
+    },
+    "OutputSecretKmsKeyAlias": {
+      "Description": "Secrets Manager Secret KMS Key Alias",
+      "Value": {"Fn::GetAtt": ["SecretKmsKey", "Outputs.OutputKmsKeyAlias"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-Secret-KmsKey-Alias"}}
+    },
+    "OutputSecretKmsKeyArn": {
+      "Description": "Secrets Manager Secret Key Arn",
+      "Value": {"Fn::GetAtt": ["SecretKmsKey", "Outputs.OutputKmsKeyArn"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-Secret-KmsKey-Arn"}}
+    },
+
+    "OutputSnsKmsKeyId": {
+      "Description": "SNS KMS Key Id",
+      "Value": {"Fn::GetAtt": ["SnsKmsKey", "Outputs.OutputKmsKeyId"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-Sns-KmsKey-Id"}}
+    },
+    "OutputSnsKmsKeyAlias": {
+      "Description": "SNS KMS Key Alias",
+      "Value": {"Fn::GetAtt": ["SnsKmsKey", "Outputs.OutputKmsKeyAlias"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-Sns-KmsKey-Alias"}}
+    },
+    "OutputSnsKmsKeyArn": {
+      "Description": "SNS Key Arn",
+      "Value": {"Fn::GetAtt": ["SnsKmsKey", "Outputs.OutputKmsKeyArn"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-Sns-KmsKey-Arn"}}
+    }
+  },
+
+  "Mappings": {
+    "ssh": {
+      "dev": {
+        "SecurityGroupIngress": [
+          {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "CidrIp": "10.78.0.0/15",         "Description": "WEX SoPo VPN Traffic"},
+          {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "CidrIp": "10.178.32.0/21",       "Description": "WEX remoteaccess VPN Traffic"}
+        ],
+        "SecurityGroupEgress": [
+          {"IpProtocol": -1, "CidrIp": "127.0.0.1/32", "Description": "Localhost Loopback"}
+        ]
+      },
+      "stage": {
+        "SecurityGroupIngress": [
+          {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "CidrIp": "10.78.0.0/15",         "Description": "WEX SoPo VPN Traffic"},
+          {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "CidrIp": "10.178.32.0/21",       "Description": "WEX remoteaccess VPN Traffic"}
+        ],
+        "SecurityGroupEgress": [
+          {"IpProtocol": -1, "CidrIp": "127.0.0.1/32", "Description": "Localhost Loopback"}
+        ]
+      },
+      "prod": {
+        "SecurityGroupIngress": [
+          {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "CidrIp": "10.78.0.0/15",         "Description": "WEX SoPo VPN Traffic"},
+          {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "CidrIp": "10.178.32.0/21",       "Description": "WEX remoteaccess VPN Traffic"}
+        ],
+        "SecurityGroupEgress": [
+          {"IpProtocol": -1, "CidrIp": "127.0.0.1/32", "Description": "Localhost Loopback"}
+        ]
+      }
+    },
+    "rdp": {
+      "dev": {
+        "SecurityGroupIngress": [
+          {"IpProtocol": "tcp", "FromPort": 3389, "ToPort": 3389, "CidrIp": "10.78.0.0/15",         "Description": "WEX SoPo VPN Traffic"},
+          {"IpProtocol": "tcp", "FromPort": 3389, "ToPort": 3389, "CidrIp": "10.178.32.0/21",       "Description": "WEX remoteaccess VPN Traffic"}
+        ],
+        "SecurityGroupEgress": [
+          {"IpProtocol": -1, "CidrIp": "127.0.0.1/32", "Description": "Localhost Loopback"}
+        ]
+      },
+      "stage": {
+        "SecurityGroupIngress": [
+          {"IpProtocol": "tcp", "FromPort": 3389, "ToPort": 3389, "CidrIp": "10.78.0.0/15",         "Description": "WEX SoPo VPN Traffic"},
+          {"IpProtocol": "tcp", "FromPort": 3389, "ToPort": 3389, "CidrIp": "10.178.32.0/21",       "Description": "WEX remoteaccess VPN Traffic"}
+        ],
+        "SecurityGroupEgress": [
+          {"IpProtocol": -1, "CidrIp": "127.0.0.1/32", "Description": "Localhost Loopback"}
+        ]
+      },
+      "prod": {
+        "SecurityGroupIngress": [
+          {"IpProtocol": "tcp", "FromPort": 3389, "ToPort": 3389, "CidrIp": "10.78.0.0/15",         "Description": "WEX SoPo VPN Traffic"},
+          {"IpProtocol": "tcp", "FromPort": 3389, "ToPort": 3389, "CidrIp": "10.178.32.0/21",       "Description": "WEX remoteaccess VPN Traffic"}
+        ],
+        "SecurityGroupEgress": [
+          {"IpProtocol": -1, "CidrIp": "127.0.0.1/32", "Description": "Localhost Loopback"}
+        ]
+      }
+    },
+    "networkReachability": {
+      "dev": {
+        "SecurityGroupIngress": [
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "10.78.0.0/15",         "Description": "WEX SoPo VPN Traffic"},
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "10.178.32.0/21",       "Description": "WEX remoteaccess VPN Traffic"},
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "10.94.49.0/24",        "Description": "Fleet Dev Private-Subnet-1a"},
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "10.94.50.0/24",        "Description": "Fleet Dev Private-Subnet-1b"},
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "10.94.51.0/24",        "Description": "Fleet Dev Private-Subnet-1c"},
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "172.28.160.0/21",      "Description": "Private subnet for Dev env from PWM Datacenter"}
+        ],
+        "SecurityGroupEgress": [
+          {"IpProtocol": -1, "CidrIp": "127.0.0.1/32", "Description": "Localhost Loopback"}
+        ]
+      },
+      "stage": {
+        "SecurityGroupIngress": [
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "10.78.0.0/15",         "Description": "WEX SoPo VPN Traffic"},
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "10.178.32.0/21",       "Description": "WEX remoteaccess VPN Traffic"},
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "10.94.41.0/24",        "Description": "Fleet Stage Private-Subnet-1a"},
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "10.94.42.0/24",        "Description": "Fleet Stage Private-Subnet-1b"},
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "10.94.43.0/24",        "Description": "Fleet Stage Private-Subnet-1c"},
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "172.18.32.0/21",       "Description": "Private subnet for Stage env from APA Datacenter"}
+        ],
+        "SecurityGroupEgress": [
+          {"IpProtocol": -1, "CidrIp": "127.0.0.1/32", "Description": "Localhost Loopback"}
+        ]
+      },
+      "prod": {
+        "SecurityGroupIngress": [
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "10.78.0.0/15",         "Description": "WEX SoPo VPN Traffic"},
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "10.178.32.0/21",       "Description": "WEX remoteaccess VPN Traffic"},
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "10.94.33.0/24",        "Description": "Fleet Prod Private-Subnet-1a"},
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "10.94.34.0/24",        "Description": "Fleet Prod Private-Subnet-1b"},
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "10.94.35.0/24",        "Description": "Fleet Prod Private-Subnet-1c"},
+          {"IpProtocol": "icmp", "FromPort": 8, "ToPort": 0, "CidrIp": "172.17.32.0/21",       "Description": "Private subnet for Prod env from APA Datacenter"}
+        ],
+        "SecurityGroupEgress": [
+          {"IpProtocol": -1, "CidrIp": "127.0.0.1/32", "Description": "Localhost Loopback"}
+        ]
+      }
+    }
+  }
+}

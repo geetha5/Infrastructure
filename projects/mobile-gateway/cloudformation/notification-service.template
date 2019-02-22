@@ -1,0 +1,494 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Notification Service cloudformation template",
+  "Parameters": {
+    "environment": {
+      "Description": "The environment for the application stack",
+      "Type": "String",
+      "Default": "dev"
+    },
+    "vpcStackName": {
+      "Description": "The stack name for the VPC CF stack",
+      "Type": "String"
+    },
+    "albCommonStackName": {
+      "Description": "The stack name for the common ALB instances for mobile gateway",
+      "Type": "String"
+    },
+    "rdsSecurityGroupId": {
+      "Description": "The id of the security group for the RDS instance",
+      "Type": "String"
+    },
+    "enableSsh": {
+      "Type": "String",
+      "Description": "If to enable ssh on instances",
+      "Default": "no",
+      "AllowedValues": [
+        "yes",
+        "no"
+      ]
+    },
+    "amiId": {
+      "Description": "The Ami id to use for instances",
+      "Type": "String"
+    },
+    "instanceType": {
+      "Description": "The instance type to use",
+      "Type": "String"
+    },
+    "instanceKeyPair": {
+      "Description": "The instance keypair to use, this will only be used if enableSSH is yes, but must be passed",
+      "Type": "String"
+    },
+    "asgServiceRoleName": {
+      "Description": "ServiceRole for the AutoScalingGroup with access to the KMS key for the EC2 instance",
+      "Type": "String"
+    },
+    "desiredCapacity": {
+      "Description": "The number of instances that are desired",
+      "Type": "String",
+      "Default": "2"
+    },
+    "maxCount": {
+      "Description": "The max number of instances that can be in the ASG",
+      "Type": "String",
+      "Default": "4"
+    },
+    "minCount": {
+      "Description": "The min number of instances that can be in the ASG",
+      "Type": "String",
+      "Default": "0"
+    },
+    "asgUpdateBatchSize": {
+      "Description": "The batch size of updates that are run by the ASG when doing a rolling deploy",
+      "Type": "String",
+      "Default": "1"
+    },
+    "hostedZoneId": {
+      "Description": "The id of the hosted zone for route53 records",
+      "Type": "String"
+    },
+    "devopsBucket": {
+      "Description": "The bucket for devops related stuff",
+      "Type": "String",
+      "Default": "wex-mobile-devops"
+    },
+    "dnsName": {
+      "Description": "The DNS name for the service",
+      "Type": "String"
+    },
+    "sumoAgentVersion": {
+      "Description": "The version of the sumologic agent to use for bootstrapping",
+      "Type": "String",
+      "Default": "19.227-15"
+    },
+    "ansibleRoleVersion": {
+      "Description": "The version of the ansible roles to deploy",
+      "Type": "String"
+    },
+    "projectVersion": {
+      "Description": "The version of the mobile gateway project to deploy",
+      "Type": "String"
+    },
+    "appVersion": {
+      "Description": "The version of the java application to deploy",
+      "Type": "String"
+    },
+    "deploymentId": {
+      "Description": "THe id of the deploy",
+      "Type": "String"
+    }
+  },
+  "Conditions": {
+    "EnableSsh": { "Fn::Equals": [ { "Ref": "enableSsh" }, "yes" ] },
+    "NonProd": { "Fn::Not": [ { "Fn::Equals": [ { "Ref": "environment" }, "prod" ] } ] }
+  },
+  "Resources": {
+    "AlbTargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Properties": {
+        "Name": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "notify-service-TG" ] ] },
+        "HealthCheckIntervalSeconds": 10,
+        "HealthCheckPath": "/admin/health",
+        "HealthCheckProtocol": "HTTP",
+        "HealthCheckPort": 6666,
+        "HealthCheckTimeoutSeconds": 5,
+        "HealthyThresholdCount": 2,
+        "UnhealthyThresholdCount": 2,
+        "Port": 5000,
+        "Protocol": "HTTP",
+        "VpcId": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-Vpc-Id" } },
+        "Tags": [
+          { "Key": "Purpose", "Value": "Notification Service" },
+          { "Key": "Environment", "Value": { "Ref": "environment" } }
+        ]
+      }
+    },
+    "AlbListenerRule": {
+      "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+      "Properties": {
+        "Actions": [
+          {
+            "Type": "forward",
+            "TargetGroupArn": { "Ref": "AlbTargetGroup" }
+          }
+        ],
+        "Conditions": [
+          {
+            "Field": "host-header",
+            "Values": [ { "Ref": "dnsName" } ]
+          }
+        ],
+        "ListenerArn": { "Fn::ImportValue": { "Fn::Sub": "${albCommonStackName}-ExternalClientHttpsListener-Arn" } },
+        "Priority": 3
+      }
+    },
+    "InstanceIamRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "ec2.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+          }]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "CloudWatch",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "autoscaling:Describe*",
+                    "cloudwatch:Describe*",
+                    "cloudwatch:List*",
+                    "cloudwatch:PutMetricAlarm*",
+                    "cloudwatch:PutMetricData",
+                    "cloudwatch:DeleteAlarms",
+                    "cloudwatch:Get*"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "CloudformationAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "cloudformation:Describe*",
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "cloudformation:SignalResource",
+                  "Resource": { "Fn::Join": [ "", [ "arn:aws:cloudformation:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":stack/", { "Ref": "AWS::StackName" }, "/*" ] ] }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "ElbAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "elasticloadbalancing:Describe*"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "Ec2Tagging",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:CreateTags",
+                    "ec2:DeleteTags",
+                    "ec2:DescribeTags",
+                    "ec2:DescribeInstances"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "ParameterStoreAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "ssm:DescribeParameters",
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "ssm:GetParameter",
+                  "Resource": [
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".sumologic.accessid" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".sumologic.accesskey" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".oauth.public-key" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".notificationservice.client-secret" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".notificationservice.db-password" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".trendmicro.tenant-id" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".trendmicro.token" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".splunk.admin-password" ] ] }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "kms:Decrypt",
+                  "Resource": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-ParameterStoreKmsKey-Arn" } }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "S3Access",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetBucketLocation",
+                    "s3:ListAllMyBuckets"
+                  ],
+                  "Resource": "arn:aws:s3:::*"
+                },
+                {
+                  "Action": ["s3:List*", "s3:HeadBucket", "s3:PutObject*"],
+                  "Effect": "Allow",
+                  "Resource": [
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}/system-reports/${environment}"},
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}/system-reports/${environment}/*"}
+                  ]
+                },
+                {
+                  "Action": ["s3:List*", "s3:GetObject"],
+                  "Effect": "Allow",
+                  "Resource": [
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}"},
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}/*"},
+                    "arn:aws:s3:::wex-mobile-artifacts",
+                    "arn:aws:s3:::wex-mobile-artifacts/*"
+                  ]
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "InstanceIamProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "InstanceProfileName": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "notify-service-iam-profile" ] ] },
+        "Path": "/",
+        "Roles": [ { "Ref": "InstanceIamRole" } ]
+      }
+    },
+    "InstanceSg": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupName": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "notify-service-SG" ] ] },
+        "GroupDescription": { "Fn::Join": [ " ", [ { "Ref": "environment" }, "Notification Service Instance Security Group" ] ] },
+        "VpcId": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-Vpc-Id" } },
+        "SecurityGroupIngress": [
+          {
+            "SourceSecurityGroupId": { "Fn::ImportValue": { "Fn::Sub": "${albCommonStackName}-ExternalAlbSg-Id" } },
+            "IpProtocol": "tcp",
+            "FromPort": 5000,
+            "ToPort": 5000
+          },
+          {
+            "SourceSecurityGroupId": { "Fn::ImportValue": { "Fn::Sub": "${albCommonStackName}-ExternalAlbSg-Id" } },
+            "IpProtocol": "tcp",
+            "FromPort": 6666,
+            "ToPort": 6666
+          }
+        ]
+      }
+    },
+    "InstanceSgRdsIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Properties": {
+        "GroupId": { "Ref": "rdsSecurityGroupId" },
+        "IpProtocol": "tcp",
+        "FromPort": 5432,
+        "ToPort": 5432,
+        "SourceSecurityGroupId": { "Ref": "InstanceSg" }
+      }
+    },
+    "ProxySshDev78NetIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Condition": "EnableSsh",
+      "Properties": {
+        "GroupId": { "Ref": "InstanceSg" },
+        "IpProtocol": "tcp",
+        "FromPort": 22,
+        "ToPort": 22,
+        "CidrIp": "10.78.0.0/16"
+      }
+    },
+    "ProxySshDev79NetIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Condition": "EnableSsh",
+      "Properties": {
+        "GroupId": { "Ref": "InstanceSg" },
+        "IpProtocol": "tcp",
+        "FromPort": 22,
+        "ToPort": 22,
+        "CidrIp": "10.79.0.0/16"
+      }
+    },
+    "InstanceLc": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Properties": {
+        "IamInstanceProfile": { "Ref": "InstanceIamProfile" },
+        "ImageId": { "Ref": "amiId" },
+        "InstanceType": { "Ref": "instanceType" },
+        "SecurityGroups": [ { "Ref": "InstanceSg" } ],
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/xvda",
+            "Ebs": {
+              "DeleteOnTermination": true,
+              "VolumeSize": "30",
+              "VolumeType": "gp2"
+            }
+          }
+        ],
+        "KeyName": { "Fn::If": [ "EnableSsh", { "Ref": "instanceKeyPair" }, { "Ref": "AWS::NoValue" } ] },
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash\n",
+                "\n",
+                "# initialization variables\n",
+                "_devopsBucket=", { "Ref": "devopsBucket" }, "\n",
+                "_environment=", { "Ref": "environment" }, "\n",
+                "_region=", { "Ref": "AWS::Region" }, "\n",
+                "_appVersion=", { "Ref": "appVersion" }, "\n",
+                "_ansibleRoleVersion=", { "Ref": "ansibleRoleVersion" }, "\n",
+                "_projectVersion=", { "Ref": "projectVersion" }, "\n",
+                "_sumoAgentVersion=", { "Ref": "sumoAgentVersion" }, "\n",
+                "_albTargetGroupArn=", { "Ref": "AlbTargetGroup" }, "\n",
+                "_stackName=", { "Ref": "AWS::StackName" }, "\n",
+                "_deploymentId=", { "Ref": "deploymentId" }, "\n",
+                "_appName=notification-service\n",
+                "\n",
+                "# pull ansible scripts\n",
+                "mkdir /root/ansible_scripts\n",
+                "aws s3 cp s3://${_devopsBucket}/ansible/${_ansibleRoleVersion}/scripts /root/ansible_scripts ",
+                "--recursive --region ${_region}\n",
+                "chmod -R 700 /root/ansible_scripts\n",
+                "\n",
+                "# run bootstrap_logs\n",
+                "_sumoS3RpmUrl=\"s3://${_devopsBucket}/installers/sumologic/SumoCollector-${_sumoAgentVersion}.x86_64.rpm\"\n",
+                "chmod 700 /root/ansible_scripts/bootstrap_logs.sh && /root/ansible_scripts/bootstrap_logs.sh ",
+                "sumo ${_environment} ${_appName} mobile ${_sumoS3RpmUrl}\n",
+                "\n",
+                "# pull ansible role archive\n",
+                "aws s3 cp s3://${_devopsBucket}/ansible/${_ansibleRoleVersion}/ansible_roles.zip /root/ansible_roles.zip ",
+                "--region ${_region}\n",
+                "\n",
+                "# run bootstrap\n",
+                "chmod 700 /root/ansible_scripts/bootstrap.sh && /root/ansible_scripts/bootstrap.sh | while IFS= ",
+                "read -r line; do echo \"$(date '+%Y-%m-%d %H:%M:%S') $line\"; done |& tee -a /var/log/bootstrap.log\n",
+                "\n",
+                "# deploy ansible roles\n",
+                "chmod 700 /root/ansible_scripts/deploy_roles.sh && /root/ansible_scripts/deploy_roles.sh ",
+                "/root/ansible_roles.zip | while IFS= read -r line; do echo \"$(date '+%Y-%m-%d %H:%M:%S') $line\"; ",
+                "done |& tee -a /var/log/bootstrap.log\n",
+                "\n",
+                "# pull playbooks\n",
+                "aws s3 cp s3://${_devopsBucket}/projects/mobile-gateway/${_projectVersion}/ansible/playbooks/${_appName}/ ",
+                "/etc/ansible/ --recursive --region ${_region}\n",
+                "\n",
+                "# pull variable file\n",
+                "aws s3 cp s3://${_devopsBucket}/variables/${_environment}/ansible/mobile-gateway/${_appName}.yml ",
+                "/etc/ansible/variables.yml --region ${_region}\n",
+                "\n",
+                "# run playbooks\n",
+                "APP_VERSION=${_appVersion} /usr/local/bin/ansible-playbook /etc/ansible/provision_playbook.yml\n",
+                "\n",
+                "# run app jar\n",
+                "sudo ln -s /root/app.jar /etc/init.d/app\n",
+                "sudo /etc/init.d/app start --spring.profiles.active=${_environment}\n",
+                "\n",
+                "# Run CFN wait\n",
+                "python /root/ansible_scripts/aws/cfn_lb_wait.py --lb-version v2 --target-group-arn ${_albTargetGroupArn} ",
+                "--instance-port 5000 -e ${_environment} -s ${_stackName} --resource-id InstanceAsg"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "InstanceAsg": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+      "Properties": {
+        "Cooldown": 300,
+        "DesiredCapacity": { "Ref": "desiredCapacity" },
+        "MaxSize": { "Ref": "maxCount" },
+        "MinSize": { "Ref": "minCount" },
+        "HealthCheckGracePeriod": 800,
+        "HealthCheckType": "ELB",
+        "TerminationPolicies": [ "Default" ],
+        "ServiceLinkedRoleARN": {"Fn::Sub": "arn:aws:iam::${AWS::AccountId}:role/aws-service-role/autoscaling.amazonaws.com/${asgServiceRoleName}"},
+        "LaunchConfigurationName": { "Ref": "InstanceLc" },
+        "TargetGroupARNs": [ { "Ref": "AlbTargetGroup" } ],
+        "VPCZoneIdentifier": [
+          { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-PrivateSubnetA-Id" } },
+          { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-PrivateSubnetB-Id" } }
+        ]
+      },
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Count": { "Ref": "desiredCapacity" },
+          "Timeout": "PT15M"
+        }
+      },
+      "UpdatePolicy": {
+        "AutoScalingRollingUpdate": {
+          "MaxBatchSize": { "Ref": "asgUpdateBatchSize" },
+          "PauseTime": "PT15M",
+          "WaitOnResourceSignals": true
+        }
+      }
+    },
+    "DnsRecord": {
+      "Type": "AWS::Route53::RecordSet",
+      "Properties": {
+        "HostedZoneId": { "Ref": "hostedZoneId" },
+        "Comment": { "Fn::Join": [ " ", [ { "Ref": "environment" }, "notification service DNS record" ] ] },
+        "Name": { "Ref": "dnsName" },
+        "Type": "CNAME",
+        "TTL": 300,
+        "ResourceRecords": [ { "Fn::ImportValue": { "Fn::Sub": "${albCommonStackName}-ExternalClientAlb-Dns" } } ]
+      }
+    }
+  }
+}

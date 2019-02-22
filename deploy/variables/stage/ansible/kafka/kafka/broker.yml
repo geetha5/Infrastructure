@@ -1,0 +1,104 @@
+---
+
+# base variables
+host_purpose: kafka
+host_environment: stage
+owning_group: mobile
+
+# splunk variables
+splunk_rpm_url: "s3://wex-mobile-devops/installers/splunk/splunkforwarder-6.6.3-e21ee54bc796-linux-2.6-x86_64.rpm"
+
+# sumologic variables
+sumologic_rpm_url: s3://wex-mobile-devops/installers/sumologic/SumoCollector-19.227-15.x86_64.rpm
+sumologic_access_id_param: "{{host_environment}}.sumologic.accessid"
+sumologic_access_key_param: "{{host_environment}}.sumologic.accesskey"
+sumologic_client_name: "kafka-broker-{{host_environment}}"
+
+# Cloudwatch Agent
+cloudwatch_agent_enabled: no
+
+sumologic_sources:
+  bootstrap_source:
+    name: bootstrap
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/bootstrap"
+    pathExpression: "/var/log/bootstrap.log"
+  ansible_source:
+    name: ansible
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/ansible"
+    pathExpression: "/var/log/ansible.log"
+  kafka_controller:
+    name: kafka-controller
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/kafka-controller"
+    pathExpression: "/var/log/kafka/controller.log"
+  kafka-authorizer:
+    name: kafka-authorizer
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/kafka-authorizer"
+    pathExpression: "/var/log/kafka/kafka-authorizer.log"
+  kafka-request:
+    name: kafka-request
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/kafka-request"
+    pathExpression: "/var/log/kafka/kafka-request.log"
+  kafka-gc:
+    name: kafka-gc
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/kafka-gc"
+    pathExpression: "/var/log/kafka/kafkaServer-gc.log.*.current"
+  kafka-server-out:
+    name: kafka-server-out
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/kafka-server-out"
+    pathExpression: "/var/log/kafka/kafkaServer.out"
+  kafka-log-cleaner:
+    name: kafka-log-cleaner
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/kafka-log-cleaner"
+    pathExpression: "/var/log/kafka/log-cleaner.log"
+  kafka-server:
+    name: kafka-server
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/kafka-server"
+    pathExpression: "/var/log/kafka/server.log"
+  kafka-state-change:
+    name: kafka-state-change
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/kafka-state-change"
+    pathExpression: "/var/log/kafka/state-change.log"
+  cloudinit_source:
+    name: cloudinit
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/cloudinit"
+    pathExpression: /var/log/cloud-init-output.log
+  kafka_cfn_wait:
+    name: cfn-wait
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/cfn-wait"
+    pathExpression: /var/log/kafka_cfn_wait.log
+
+# trendmicro variables
+trendmicro_provider: saas
+trendmicro_url: s3://wex-mobile-devops/installers/trendmicro/TrendMicro-Agent-amzn1-10.1.0-356.x86_64.rpm
+trendmicro_dsm_url: dsm://agents.deepsecurity.trendmicro.com:443/
+trendmicro_policy_id: 201
+trendmicro_tenant_id: "{{host_environment}}.trendmicro.tenant-id"
+trendmicro_token: "{{host_environment}}.trendmicro.token"
+
+# supervisor variables
+supervisor_password_param_name: "{{host_environment}}.supervisor.password"
+
+# jdk variables
+jdk_rpm_url: "s3://wex-mobile-devops/installers/jdk/jdk-8u151-linux-x64.rpm"
+
+# kafka variables
+kafka_package_url: s3://wex-mobile-devops/installers/kafka/kafka_2.11-1.0.0.tgz
+kafka_cluster_type: cluster
+kafka_mount_log_ebs: yes
+
+kafka_use_supervisor: yes
+kafka_broker_count: 3
+
+kafka_dns_prefix: "{{host_purpose}}-broker"
+kafka_dns_domain: "{{host_environment}}.intwexmobile.net"
+
+zookeeper_dns_prefix: zookeeper-kafka
+zookeeper_dns_domain: "{{host_environment}}.intwexmobile.net"
+
+kafka_zookeeper_server_list:
+- "{{ zookeeper_dns_prefix }}-1.{{ zookeeper_dns_domain }}"
+- "{{ zookeeper_dns_prefix }}-2.{{ zookeeper_dns_domain }}"
+- "{{ zookeeper_dns_prefix }}-3.{{ zookeeper_dns_domain }}"
+
+kafka_log_dirs: /home/kafka/kafka-logs
+

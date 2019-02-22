@@ -1,0 +1,157 @@
+---
+
+# base variables
+host_purpose: lead-gen-service
+host_environment: prod
+host_region: us-east-1
+platform_instance: blue
+owning_group: mwd
+
+devops_bucket: "wex-mobile-devops"
+
+# splunk variables
+splunk_rpm_url: "s3://{{devops_bucket}}/installers/splunk/splunkforwarder-7.2.0-8c86330ac18-linux-2.6-x86_64.rpm"
+splunk_mgmt_port: 6089
+
+# trendmicro variables
+trendmicro_provider: saas
+trendmicro_url: "s3://{{devops_bucket}}/installers/trendmicro/TrendMicro-Agent-amzn1-10.1.0-356.x86_64.rpm"
+trendmicro_dsm_url: dsm://agents.deepsecurity.trendmicro.com:443/
+trendmicro_policy_id: 201
+trendmicro_tenant_id: "{{host_environment}}.trendmicro.tenant-id"
+trendmicro_token: "{{host_environment}}.trendmicro.token"
+
+# sumologic variables
+sumologic_rpm_url: "s3://{{devops_bucket}}/installers/sumologic/SumoCollector-19.227-15.x86_64.rpm"
+sumologic_access_id_param: "{{host_environment}}.sumologic.accessid"
+sumologic_access_key_param: "{{host_environment}}.sumologic.accesskey"
+sumologic_client_name: "{{host_purpose}}-{{host_environment}}"
+
+sumologic_sources:
+  cloud_init_source:
+    name: cloud
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/cloud_init"
+    pathExpression: "/var/log/cloud-init-output.log"
+  bootstrap_source:
+    name: bootstrap
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/bootstrap"
+    pathExpression: "/var/log/bootstrap.log"
+  ansible_source:
+    name: ansible
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/ansible"
+    pathExpression: "/var/log/ansible.log"
+  app_source:
+    name: app
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/app"
+    pathExpression: "/var/log/nginx/*error.log"
+  access_source:
+    name: access
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/app"
+    pathExpression: "/var/log/nginx/*access.log"
+
+# php
+php_version: "72"
+php_install_optional_packages: yes
+php_optional_packages:
+- php72-mysqlnd
+- php72-mbstring
+- php72-pdo
+
+php_deploy_apps:
+  - name: citgo
+    s3_bucket: "wex-mobile-artifacts"
+    s3_prefix: "salesforce/release/1.0.0"
+    s3_object: "citgo.tgz"
+    doc_root: "/var/www/vhosts/citgo/html"
+    app_name: Citgo
+    app_url: "https://citgo.{{platform_instance}}.{{host_environment}}.fleetcardappservices.com"
+    server_name: "citgo.{{platform_instance}}.{{host_environment}}.fleetcardappservices.com"
+    https: "true"
+    migrate_db: "yes"
+    mailjet_validation: c6540fb1f8b5f5bae60a1ae1974c2675.txt
+    SALESFORCE_API_DOMAIN: wexinc.my.salesforce.com
+    SALESFORCE_OAUTH_CALLBACK_URL: "https://citgo.{{platform_instance}}.{{host_environment}}.fleetcardappservices.com/salesforce/callback"
+    SALESFORCE_OAUTH_DOMAIN: wexinc.my.salesforce.com
+    SALESFORCE_OAUTH_CONSUMER_TOKEN: 3MVG9VmVOCGHKYBTpdjHFjAdmzvNE5.W5cun.8FAkfJPBzWoP_ncVQhAute63Kk6DPHgyHAjCD4Co4rbqcW1S
+    SALESFORCE_OAUTH_CONSUMER_SECRET: "4907775369313610990"
+  - name: esso
+    s3_bucket: "wex-mobile-artifacts"
+    s3_prefix: "salesforce/release/1.0.1"
+    s3_object: "esso.tgz"
+    doc_root: "/var/www/vhosts/esso/html"
+    app_name: Esso
+    app_url: "https://esso.{{platform_instance}}.{{host_environment}}.fleetcardappservices.com"
+    server_name: "esso.{{platform_instance}}.{{host_environment}}.fleetcardappservices.com"
+    https: "true"
+    migrate_db: "yes"
+    mailjet_validation: c226b2cdafb23c903ee006e454038175.txt
+    SALESFORCE_API_DOMAIN: wexinc.my.salesforce.com
+    SALESFORCE_OAUTH_CALLBACK_URL: "https://esso.{{platform_instance}}.{{host_environment}}.fleetcardappservices.com/salesforce/callback"
+    SALESFORCE_OAUTH_DOMAIN: wexinc.my.salesforce.com
+    SALESFORCE_OAUTH_CONSUMER_TOKEN: 3MVG9VmVOCGHKYBTpdjHFjAdmzvNE5.W5cun.8FAkfJPBzWoP_ncVQhAute63Kk6DPHgyHAjCD4Co4rbqcW1S
+    SALESFORCE_OAUTH_CONSUMER_SECRET: 4907775369313610990
+  - name: exxon
+    s3_bucket: "wex-mobile-artifacts"
+    s3_prefix: "salesforce/release/1.0.1"
+    s3_object: "exxon.tgz"
+    doc_root: "/var/www/vhosts/exxon/html"
+    app_name: Exxon
+    app_url: "https://exxon.{{platform_instance}}.{{host_environment}}.fleetcardappservices.com"
+    server_name: "exxon.{{platform_instance}}.{{host_environment}}.fleetcardappservices.com"
+    https: "true"
+    migrate_db: "yes"
+    mailjet_validation: 6c9a4a9e320021e2598b75a9a64f034f.txt
+    SALESFORCE_API_DOMAIN: wexinc.my.salesforce.com
+    SALESFORCE_OAUTH_CALLBACK_URL: "https://exxon.{{platform_instance}}.{{host_environment}}.fleetcardappservices.com/salesforce/callback"
+    SALESFORCE_OAUTH_DOMAIN: wexinc.my.salesforce.com
+    SALESFORCE_OAUTH_CONSUMER_TOKEN: 3MVG9VmVOCGHKYBTpdjHFjAdmzvNE5.W5cun.8FAkfJPBzWoP_ncVQhAute63Kk6DPHgyHAjCD4Co4rbqcW1S
+    SALESFORCE_OAUTH_CONSUMER_SECRET: 4907775369313610990
+  - name: speedway
+    s3_bucket: "wex-mobile-artifacts"
+    s3_prefix: "salesforce/release/1.0.0"
+    s3_object: "speedway.tgz"
+    doc_root: "/var/www/vhosts/speedway/html"
+    app_name: Speedway
+    app_url: "https://speedway.{{platform_instance}}.{{host_environment}}.fleetcardappservices.com"
+    server_name: "speedway.{{platform_instance}}.{{host_environment}}.fleetcardappservices.com"
+    https: "true"
+    migrate_db: "yes"
+    mailjet_validation: 9f043c0fbb66fa4ad1f08917f6dd42fb.txt
+    SALESFORCE_API_DOMAIN: wexinc.my.salesforce.com
+    SALESFORCE_OAUTH_CALLBACK_URL: "https://speedway.{{platform_instance}}.{{host_environment}}.fleetcardappservices.com/salesforce/callback"
+    SALESFORCE_OAUTH_DOMAIN: wexinc.my.salesforce.com
+    SALESFORCE_OAUTH_CONSUMER_TOKEN: 3MVG9VmVOCGHKYBTpdjHFjAdmzvNE5.W5cun.8FAkfJPBzWoP_ncVQhAute63Kk6DPHgyHAjCD4Co4rbqcW1S
+    SALESFORCE_OAUTH_CONSUMER_SECRET: 4907775369313610990
+  - name: sunoco
+    s3_bucket: "wex-mobile-artifacts"
+    s3_prefix: "salesforce/release/1.0.0"
+    s3_object: "sunoco.tgz"
+    doc_root: "/var/www/vhosts/sunoco/html"
+    app_name: Sunoco
+    app_url: "https://sunoco.{{platform_instance}}.{{host_environment}}.fleetcardappservices.com"
+    server_name: "sunoco.{{platform_instance}}.{{host_environment}}.fleetcardappservices.com"
+    https: "true"
+    migrate_db: "yes"
+    mailjet_validation: ccf09c571f050727105cd4718e532222.txt
+    SALESFORCE_API_DOMAIN: wexinc.my.salesforce.com
+    SALESFORCE_OAUTH_CALLBACK_URL: "https://sunoco.{{platform_instance}}.{{host_environment}}.fleetcardappservices.com/salesforce/callback"
+    SALESFORCE_OAUTH_DOMAIN: wexinc.my.salesforce.com
+    SALESFORCE_OAUTH_CONSUMER_TOKEN: 3MVG9VmVOCGHKYBTpdjHFjAdmzvNE5.W5cun.8FAkfJPBzWoP_ncVQhAute63Kk6DPHgyHAjCD4Co4rbqcW1S
+    SALESFORCE_OAUTH_CONSUMER_SECRET: 4907775369313610990
+
+
+# nginx
+nginx_doc_group: ec2-user
+
+nginx_document_roots:
+- /var/www/html
+- /var/www/vhosts/citgo/html
+- /var/www/vhosts/esso/html
+- /var/www/vhosts/exxon/html
+- /var/www/vhosts/speedway/html
+- /var/www/vhosts/sunoco/html
+
+nginx_config_files:
+  root_config:
+    download_location: "s3://{{devops_bucket}}/config/{{host_environment}}/nginx_configs/salesforce-{{host_environment}}-default.conf"
+    config_location: /etc/nginx/nginx.conf

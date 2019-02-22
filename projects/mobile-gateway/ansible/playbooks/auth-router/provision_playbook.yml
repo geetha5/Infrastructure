@@ -1,0 +1,26 @@
+---
+
+- name: auth-router provision master playbook
+  hosts: localhost
+  become: yes
+  become_user: root
+  vars_files:
+    - /etc/ansible/variables.yml
+
+  roles:
+    - base
+    - chrony
+    - sumologic
+    - jdk
+    - nexus_artifact
+    - dynamic_spring_properties
+    - splunk
+    - trendmicro
+
+  post_tasks:
+    - name: Add Hostname To /etc/hosts
+      lineinfile:
+        path: /etc/hosts
+        state: present
+        regexp: '^127\.0\.0\.1'
+        line: "127.0.0.1   {{ aws_hostname }} localhost localhost.localdomain localhost4 localhost4.localdomain4"

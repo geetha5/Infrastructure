@@ -1,0 +1,304 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Common Mobile S3",
+  "Parameters": {
+    "testStack": {
+      "Description": "This will set if the stack is only for testing which will change to random names",
+      "Type": "String",
+      "Default": "no",
+      "AllowedValues": [
+        "yes",
+        "no"
+      ]
+    }
+  },
+  "Conditions": {
+    "enableTesting": { "Fn::Equals": [ { "Ref": "testStack" }, "yes" ] }
+  },
+  "Resources": {
+    "MobileCommonS3KmsKey": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "Description": "WEX Mobile Common S3 Kms Key",
+        "Enabled": true,
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Id": "wex-mobile-s3-common",
+          "Statement": [
+            {
+              "Sid": "key-management",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": [
+                  { "Fn::Join": [ "", [ "arn:aws:iam::", { "Ref": "AWS::AccountId" }, ":root" ] ] }
+                ]
+              },
+              "Action": [
+                "kms:Create*",
+                "kms:Describe*",
+                "kms:Enable*",
+                "kms:List*",
+                "kms:Put*",
+                "kms:Update*",
+                "kms:Revoke*",
+                "kms:Disable*",
+                "kms:Get*",
+                "kms:Delete*",
+                "kms:ScheduleKeyDeletion",
+                "kms:CancelKeyDeletion"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Sid": "key-use",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": [
+                  "arn:aws:iam::518554605247:root",
+                  "arn:aws:iam::784360110492:root",
+                  "arn:aws:iam::032744083734:root"
+                ]
+              },
+              "Action": [
+                "kms:Decrypt",
+                "kms:Encrypt",
+                "kms:GenerateDataKey"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
+      }
+    },
+    "MobileCommonS3KmsKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": "alias/wex-mobile-s3-common",
+        "TargetKeyId": { "Ref": "MobileCommonS3KmsKey" }
+      }
+    },
+    "MobileDevopsBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketName": { "Fn::If": [ "enableTesting", { "Ref": "AWS::NoValue" }, { "Fn::Join": [ "-", [ "wex-mobile-devops", { "Ref": "AWS::Region" } ] ] } ] },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "KMSMasterKeyID": { "Ref": "MobileCommonS3KmsKey" },
+                "SSEAlgorithm": "aws:kms"
+              }
+            }
+          ]
+        },
+        "Tags": [
+          { "Key": "Owner", "Value": "mobile" }
+        ]
+      }
+    },
+    "MobileDevopsBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": { "Ref": "MobileDevopsBucket" },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Id": "MobileDevopsBucketPolicy",
+          "Statement": [
+            {
+              "Sid": "AllowAll_Mobile_Dev_Root",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS":  "arn:aws:iam::518554605247:root"
+              },
+              "Action": "s3:*",
+              "Resource": [
+                { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileDevopsBucket" } ] ] },
+                { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileDevopsBucket" }, "/*" ] ] }
+              ]
+            },
+            {
+              "Sid": "AllowAll_Mobile_Stage_Root",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS":  "arn:aws:iam::784360110492:root"
+              },
+              "Action": "s3:*",
+              "Resource": [
+                { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileDevopsBucket" } ] ] },
+                { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileDevopsBucket" }, "/*" ] ] }
+              ]
+            },
+            {
+              "Sid": "AllowAll_Mobile_Prod_Root",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS":  "arn:aws:iam::032744083734:root"
+              },
+              "Action": "s3:*",
+              "Resource": [
+                { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileDevopsBucket" } ] ] },
+                { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileDevopsBucket" }, "/*" ] ] }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "MobileArtifactsBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketName": { "Fn::If": [ "enableTesting", { "Ref": "AWS::NoValue" }, { "Fn::Join": [ "-", [ "wex-mobile-artifacts", { "Ref": "AWS::Region" } ] ] } ] },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "KMSMasterKeyID": { "Ref": "MobileCommonS3KmsKey" },
+                "SSEAlgorithm": "aws:kms"
+              }
+            }
+          ]
+        },
+        "Tags": [
+          { "Key": "Owner", "Value": "mobile" }
+        ]
+      }
+    },
+    "MobileArtifactsBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": { "Ref": "MobileArtifactsBucket" },
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Id": "MobileArtifactsBucketPolicy",
+          "Statement": [
+            {
+              "Sid": "AllowAll_Mobile_Dev_Root",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS":  "arn:aws:iam::518554605247:root"
+              },
+              "Action": "s3:*",
+              "Resource": [
+                { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileArtifactsBucket" } ] ] },
+                { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileArtifactsBucket" }, "/*" ] ] }
+              ]
+            },
+            {
+              "Sid": "AllowAll_Mobile_Stage_Root",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS":  "arn:aws:iam::784360110492:root"
+              },
+              "Action": "s3:*",
+              "Resource": [
+                { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileArtifactsBucket" } ] ] },
+                { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileArtifactsBucket" }, "/*" ] ] }
+              ]
+            },
+            {
+              "Sid": "AllowAll_Mobile_Prod_Root",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS":  "arn:aws:iam::032744083734:root"
+              },
+              "Action": "s3:*",
+              "Resource": [
+                { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileArtifactsBucket" } ] ] },
+                { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileArtifactsBucket" }, "/*" ] ] }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "MobileDevopsIamS3Group": {
+      "Type": "AWS::IAM::Group",
+      "Properties": {
+        "GroupName": "Mobile-DevOps-S3-Access",
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "S3-Access",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetBucketLocation",
+                    "s3:ListAllMyBuckets"
+                  ],
+                  "Resource": "arn:aws:s3:::*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "s3:*",
+                  "Resource": [
+                    { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileArtifactsBucket" } ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileArtifactsBucket" }, "/*" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileDevopsBucket" } ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileDevopsBucket" }, "/*" ] ] }
+                  ]
+                },
+                {
+                  "Effect": "Deny",
+                  "Action": "s3:DeleteBucket",
+                  "Resource": [
+                    { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileArtifactsBucket" } ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "MobileDevopsBucket" } ] ] }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "Mobile-S3-KMS-Permissions",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "kms:Decrypt",
+                    "kms:Encrypt",
+                    "kms:GenerateDataKey"
+                  ],
+                  "Resource": { "Fn::GetAtt": [ "MobileCommonS3KmsKey", "Arn" ] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "AddMobileDevopsUsersToS3Group": {
+      "Type": "AWS::IAM::UserToGroupAddition",
+      "Properties": {
+        "GroupName": "Mobile-DevOps-S3-Access",
+        "Users": [
+          "dgutierrez"
+        ]
+      },
+      "DependsOn": [
+        "MobileDevopsIamS3Group"
+      ]
+    }
+  },
+  "Outputs": {
+    "OutputS3CommonKmsKeyId": {
+      "Description": "The key id of the mobile s3 common key key",
+      "Value": { "Ref": "MobileCommonS3KmsKey" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-MobileS3CommonKmsKey-Id" }
+      }
+    },
+    "OutputS3CommonKmsKeyArn": {
+      "Description": "The key id of the mobile s3 common key key",
+      "Value": { "Fn::GetAtt": [ "MobileCommonS3KmsKey", "Arn" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-MobileS3CommonKmsKey-Arn" }
+      }
+    }
+  }
+}

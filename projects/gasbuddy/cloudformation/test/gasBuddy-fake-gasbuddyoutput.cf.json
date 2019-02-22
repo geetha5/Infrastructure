@@ -1,0 +1,200 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Test Stack for fake Gasbuddy Output Consumer",
+  "Parameters": {
+    "environment": {
+      "Type": "String",
+      "Description": "The stack environment"
+    },
+    "kinesisStackName": {
+      "Type": "String",
+      "Description": "The stack name of the kinesis stack for gas buddy"
+    },
+    "vpcStackName": {
+      "Type": "String",
+      "Description": "The stack name of the vpc stack"
+    },
+    "kmsStackName": {
+      "Type": "String",
+      "Description": "The stack name of the kms key for gasbuddy for references"
+    },
+    "memory": {
+      "Type": "Number",
+      "Description": "The lambda memory given to the consumer lambda function",
+      "Default": "128"
+    },
+    "timeout": {
+      "Type": "Number",
+      "Description": "The timeout for the consumer lambda function",
+      "Default": "300"
+    },
+    "artifactsBucket": {
+      "Type": "String",
+      "Description": "The S3 bucket where code is stored"
+    },
+    "s3Key": {
+      "Type": "String",
+      "Description": "The S3 Key of the consumer jar or zip"
+    },
+    "batchSize": {
+      "Type": "Number",
+      "Description": "The batch size for the lambda consumer event"
+    },
+    "rdsSecurityGroupId": {
+      "Type": "String",
+      "Description": "The security group id of the rds security group"
+    },
+    "dbHostname": {
+      "Type": "String",
+      "Description": "The hostname of the db"
+    },
+    "dbUser": {
+      "Type": "String",
+      "Description": "The username for the db"
+    },
+    "dbName": {
+      "Type": "String",
+      "Description": "The db name",
+      "Default": "gasbuddy_auth"
+    },
+    "dbPass": {
+      "Type": "String",
+      "Description": "The password for the db"
+    }
+  },
+  "Resources": {
+    "RdsSecurityGroupIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Properties": {
+        "Description": "Allow DBWriter Lambda Access",
+        "SourceSecurityGroupId": { "Ref": "MockGasbuddySecurityGroup" },
+        "IpProtocol": "tcp",
+        "FromPort": 5432,
+        "ToPort": 5432,
+        "GroupId": { "Ref": "rdsSecurityGroupId" }
+      },
+      "DependsOn": [ "MockGBLambdaRole" ]
+    },
+    "MockGasbuddySecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupName": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "MockGasbuddy-Lambda-SG" ] ] },
+        "GroupDescription": { "Fn::Join": [ " ", [ { "Ref": "environment" }, "MockGasbuddy Lambda Security Group" ] ] },
+        "VpcId": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-Vpc-Id" } }
+      },
+      "DependsOn": [ "MockGBLambdaRole" ]
+    },
+    "MockGBLambdaRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "lambda.amazonaws.com" ]
+            },
+            "Action": "sts:AssumeRole"
+          }]
+        },
+        "Path": "/",
+        "ManagedPolicyArns": [
+          "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+        ],
+        "Policies": [
+          {
+            "PolicyName": "CloudwatchLogs-RW",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": "arn:aws:logs:*:*:*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "ListAllStreams",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "kinesis:ListStream",
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "GBOutputStream-Get",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "kms:Decrypt",
+                  "Resource": { "Fn::ImportValue": { "Fn::Sub": "${kmsStackName}-GasBuddyStreamKmsKey-Arn" } }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "kinesis:Get*",
+                    "kinesis:Describe*"
+                  ],
+                  "Resource": { "Fn::ImportValue": { "Fn::Sub": "${kinesisStackName}-GBOutputStream-Arn" } }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "MockGBFunction": {
+      "Type": "AWS::Lambda::Function",
+      "Properties": {
+        "Code": {
+          "S3Bucket": { "Ref": "artifactsBucket" },
+          "S3Key": { "Ref": "s3Key" }
+        },
+        "Handler": "com.wex.mobile.gasbuddymockconsumer.lambda.GasBuddyMockRequestHandler",
+        "MemorySize": { "Ref": "memory" },
+        "Runtime": "java8",
+        "Role": { "Fn::GetAtt": [ "MockGBLambdaRole", "Arn" ] },
+        "VpcConfig": {
+          "SecurityGroupIds": [ { "Ref": "MockGasbuddySecurityGroup" } ],
+          "SubnetIds": [
+            { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-PrivateSubnetA-Id" } },
+            { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-PrivateSubnetB-Id" } }
+          ]
+        },
+        "Environment": {
+          "Variables": {
+            "DB_HOST": { "Ref": "dbHostname" },
+            "DB_PORT": "5432",
+            "DB_NAME": { "Ref": "dbName" },
+            "DB_SCHEMA": "public",
+            "DB_USER": { "Ref": "dbUser" },
+            "DB_PASSWORD": { "Ref": "dbPass" }
+          }
+        }
+      }
+    },
+    "MockGBTriggerEvent": {
+      "Type": "AWS::Lambda::EventSourceMapping",
+      "Properties": {
+        "BatchSize": { "Ref": "batchSize" },
+        "Enabled": true,
+        "EventSourceArn": { "Fn::ImportValue": { "Fn::Sub": "${kinesisStackName}-GBOutputStream-Arn" } },
+        "FunctionName": { "Ref": "MockGBFunction" },
+        "StartingPosition": "TRIM_HORIZON"
+      }
+    }
+  }
+}

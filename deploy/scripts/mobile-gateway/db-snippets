@@ -1,0 +1,37 @@
+
+-- User: siteservice
+-- DROP USER siteservice;
+
+CREATE USER siteservice WITH
+	LOGIN
+	NOSUPERUSER
+	NOCREATEDB
+	NOCREATEROLE
+	INHERIT
+	NOREPLICATION
+	CONNECTION LIMIT -1
+	PASSWORD 'xxxxxx';
+
+COMMENT ON ROLE siteservice IS 'Mobile Gateway Site Service Application user';
+
+CREATE SCHEMA siteservice AUTHORIZATION mg_prod_admin;
+
+GRANT ALL ON SCHEMA siteservice TO siteservice;
+
+GRANT ALL ON SCHEMA siteservice TO mg_prod_admin;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA siteservice
+GRANT ALL ON TABLES TO siteservice;
+
+
+
+
+-- Set QA User permissions
+GRANT SELECT ON ALL TABLES IN SCHEMA <schema> TO <username>;
+ALTER DEFAULT PRIVILEGES IN SCHEMA <schema> GRANT SELECT ON TABLES TO <username>;
+
+--
+-- Example
+--
+-- GRANT SELECT ON ALL TABLES IN SCHEMA siteservice TO qa_user;
+-- ALTER DEFAULT PRIVILEGES IN SCHEMA siteservice GRANT SELECT ON TABLES TO qa_user;

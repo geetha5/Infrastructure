@@ -1,0 +1,486 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "MWD - NA Fleet - deuce-service - application infrastructure",
+
+  "Parameters": {
+    "vpc": {
+      "Type": "AWS::EC2::VPC::Id",
+      "Description": "VPC to create resources under"
+    },
+    "accountStackName": {
+      "Type": "String",
+      "Description": "Account Stack Name",
+      "Default": "account-bootstrap"
+    },
+    "platformStackName": {
+      "Type": "String",
+      "Description": "Platform Stack Name"
+    },
+    "platformName": {
+      "Type": "String",
+      "Default": "nafleet"
+    },
+    "appName": {
+      "Description": "The application name being deployed",
+      "Type": "String",
+      "Default": "deuce-service"
+    },
+    "envType": {
+      "Type": "String",
+      "Description": "designated environment type",
+      "Default": "dev",
+      "AllowedValues": ["dev", "stage", "prod"]
+    },
+    "envInstance": {
+      "Type": "String",
+      "Description": "unique short name for this Platform Instance, e.g. sit, dit",
+      "MinLength": 3,
+      "MaxLength": 10,
+      "AllowedPattern": "^[a-z][a-z0-9\\-]*$",
+      "ConstraintDescription": "Must start with a letter, only contain lower-case letters, '-', and/or numbers"
+    },
+    "devopsBucket": {
+      "Description": "The bucket for devops related stuff",
+      "Type": "String",
+      "Default": "wex-mobile-devops"
+    },
+
+    "privateSubnetsCount": {
+      "Type": "String",
+      "Description": "Number of Subnets passed to privateSubnets",
+      "Default": "2",
+      "AllowedValues": ["2", "3"]
+    },
+    "privateSubnets": {
+      "Type": "List<AWS::EC2::Subnet::Id>",
+      "Description": "Private Subnets, should contain either 2 or 3"
+    }
+  },
+
+  "Conditions": {
+    "isDevelopment": {"Fn::Equals": [{"Ref": "envType"}, "dev"]},
+    "isNotProduction": {"Fn::Not": [{"Fn::Equals": [{"Ref": "envType"}, "prod"]}]},
+    "hasThreeSubnets": {"Fn::Equals": [{"Ref": "privateSubnetsCount"}, "3"]}
+  },
+
+  "Resources": {
+    "SecGrpLoadBalancer": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Description": "Allow Traffic to Application Load Balancer",
+      "Properties": {
+        "VpcId": {"Ref": "vpc"},
+        "GroupDescription": {"Fn::Sub": "${appName} Internal Application Load Balancer"},
+        "GroupName": {"Fn::Sub": "${platformName}-${envInstance}-${appName}-alb-sg"},
+        "SecurityGroupIngress": [
+          {"Fn::If": ["isNotProduction", {"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "CidrIp": "10.78.0.0/15",   "Description": "Standard HTTPS Traffic from WEX VPN"},                                        {"Ref": "AWS::NoValue"}]},
+          {"Fn::If": ["isNotProduction", {"IpProtocol": "tcp", "FromPort": 80,  "ToPort": 80,  "CidrIp": "10.78.0.0/15",   "Description": "Standard HTTP Traffic from WEX VPN to be redirected to HTTPS"},               {"Ref": "AWS::NoValue"}]},
+          {"Fn::If": ["isNotProduction", {"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "CidrIp": "10.178.32.0/21", "Description": "Standard HTTPS Traffic from WEX Remote Access VPN"},                          {"Ref": "AWS::NoValue"}]},
+          {"Fn::If": ["isNotProduction", {"IpProtocol": "tcp", "FromPort": 80,  "ToPort": 80,  "CidrIp": "10.178.32.0/21", "Description": "Standard HTTP Traffic from WEX Remote Access VPN to be redirected to HTTPS"}, {"Ref": "AWS::NoValue"}]}
+        ],
+        "SecurityGroupEgress": [
+          {"IpProtocol": -1, "CidrIp": "127.0.0.1/32", "Description": "Localhost Loopback"}
+        ],
+        "Tags": [
+          {"Key": "Name", "Value": {"Fn::Sub": "${platformName} - ${envInstance} - ${appName} ALB"}}
+        ]
+      }
+    },
+    "LoadBalancer": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "Description": "Internal/Private Load Balancer",
+      "Properties": {
+        "Type": "application",
+        "Scheme": "internal",
+        "Name": {"Fn::Sub": "${platformName}-${envInstance}-deuce-service-alb"},
+        "SecurityGroups": [{"Ref": "SecGrpLoadBalancer"}],
+        "Subnets": {"Ref": "privateSubnets"},
+        "Tags": [
+          {"Key": "Name", "Value": {"Fn::Sub": "${platformName} - ${envInstance} - Load Balancer - ${appName}"}}
+        ]
+      },
+      "DependsOn": ["SecGrpLoadBalancer"]
+    },
+    "ListenerHttp": {
+      "Type": "Custom::ElasticLoadBalancingV2_Listener",
+      "Description": "Default HTTP Listener Rule redirecting to HTTPS",
+      "Properties": {
+        "ServiceToken": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-cfELBv2Listener-Arn"}},
+        "DefaultActions" : [
+          {"Type": "redirect", "RedirectConfig": {"Protocol": "HTTPS", "Port": 443, "StatusCode": "HTTP_301"}}
+        ],
+        "LoadBalancerArn" : {"Ref": "LoadBalancer"},
+        "Port" : 80,
+        "Protocol" : "HTTP"
+      },
+      "DependsOn": ["LoadBalancer"]
+    },
+    "ListenerHttps": {
+      "Type": "Custom::ElasticLoadBalancingV2_Listener",
+      "Description": "Default HTTPS Listener rule returning 404 if no other rule is triggered first",
+      "Properties": {
+        "ServiceToken": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-cfELBv2Listener-Arn"}},
+        "DefaultActions": [{"Type": "fixed-response", "FixedResponseConfig": {"StatusCode": "404"}}],
+        "LoadBalancerArn": {"Ref": "LoadBalancer"},
+        "Port": 443,
+        "Protocol": "HTTPS",
+        "SslPolicy": "ELBSecurityPolicy-TLS-1-2-Ext-2018-06",
+        "Certificates": [
+          {"CertificateArn": {"Fn::ImportValue": {"Fn::Sub": "${platformStackName}-HttpsCertInternal"}}}
+        ]
+      },
+      "DependsOn": ["LoadBalancer"]
+    },
+    "TargetGroup": {
+      "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+      "Description": "TargetGroup for Load Balancer",
+      "Properties": {
+        "Name": {"Fn::Sub": "${platformName}-${envInstance}-${appName}-TG"},
+        "HealthCheckIntervalSeconds": 10,
+        "HealthCheckPath": "/DeuceService/welcome.page",
+        "HealthCheckProtocol": "HTTPS",
+        "HealthCheckTimeoutSeconds": 5,
+        "HealthyThresholdCount": 2,
+        "UnhealthyThresholdCount": 2,
+        "Port": 8443,
+        "Protocol": "HTTPS",
+        "VpcId": {"Ref": "vpc"}
+      }
+    },
+    "ListenerRuleHttps": {
+      "Type": "AWS::ElasticLoadBalancingV2::ListenerRule",
+      "Description": "HTTPS Listener rule to direct traffic to ",
+      "Properties": {
+        "ListenerArn": {"Fn::GetAtt": ["ListenerHttps", "Arn"]},
+        "Actions": [{"Type": "forward", "TargetGroupArn": {"Ref": "TargetGroup"}}],
+        "Conditions": [{"Field": "path-pattern", "Values": [ "/DeuceService*" ]}],
+        "Priority": 1
+      },
+      "DependsOn": ["LoadBalancer", "ListenerHttps", "TargetGroup"]
+    },
+    "RecordSetLoadBalancer": {
+      "Type": "AWS::Route53::RecordSet",
+      "Description": "DNS Records for the directing traffic to the load balancers",
+      "Properties": {
+        "Comment": {"Fn::Sub": "Private ALB for the ${envInstance} instance of the ${platformName} platform"},
+        "HostedZoneId": {"Fn::ImportValue": {"Fn::Sub": "${platformStackName}-HostedZoneInternal-Id"}},
+        "Name": {"Fn::Sub": ["${appName}.${domain}", {"domain": {"Fn::ImportValue": {"Fn::Sub": "${platformStackName}-HostedZoneInternal-Domain"}}}]},
+        "Type": "A",
+        "AliasTarget": {
+          "HostedZoneId": {"Fn::GetAtt": ["LoadBalancer", "CanonicalHostedZoneID"]},
+          "DNSName": {"Fn::GetAtt": ["LoadBalancer", "DNSName"]}
+        }
+      },
+      "DependsOn": ["LoadBalancer"]
+    },
+
+    "SecGrpEfsFileSystem": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Description": "Allow Traffic to DeuceService Shared Temp EFS file system",
+      "Properties": {
+        "VpcId": {"Ref": "vpc"},
+        "GroupDescription": "Access to DeuceService shared temp drive",
+        "GroupName": {"Fn::Sub": "${platformName}-${envInstance}-${appName}-efs-sg"},
+        "SecurityGroupIngress": [
+                                       {"IpProtocol": "tcp", "FromPort": 2049, "ToPort": 2049, "SourceSecurityGroupId": {"Ref": "SecGrpEc2Instance"}, "Description": "deuce-service traffic to efs instances"},
+          {"Fn::If": ["isDevelopment", {"IpProtocol": "tcp", "FromPort": 2049, "ToPort": 2049, "CidrIp": "10.78.0.0/15",   "Description": "NFS traffic from WEX VPN"},               {"Ref": "AWS::NoValue"}]},
+          {"Fn::If": ["isDevelopment", {"IpProtocol": "tcp", "FromPort": 2049, "ToPort": 2049, "CidrIp": "10.178.32.0/21", "Description": "NFS traffic from WEX Remote Access VPN"}, {"Ref": "AWS::NoValue"}]}
+        ],
+        "SecurityGroupEgress": [
+          {"IpProtocol": -1, "CidrIp": "127.0.0.1/32", "Description": "Localhost Loopback"}
+        ],
+        "Tags": [
+          {"Key": "Name", "Value": {"Fn::Sub": "${platformName} - ${envInstance} - ${appName} EFS"}}
+        ]
+      },
+      "DependsOn": "SecGrpEc2Instance"
+    },
+    "EfsFileSystem": {
+      "Type": "AWS::EFS::FileSystem",
+      "Properties": {
+        "Encrypted": true,
+        "FileSystemTags": [
+          {"Key": "Name", "Value": {"Fn::Sub": "${platformName}-${envInstance}-${appName}-temp-EFS"}},
+          {"Key": "mount_path", "Value": "/nfs/mp_temp"},
+          {"Key": "symlink", "Value": "/usr/share/tomcat/mp_temp"}
+        ],
+        "KmsKeyId": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-EC2-KmsKey-Alias"}},
+        "PerformanceMode": "generalPurpose",
+        "ThroughputMode": "bursting"
+      }
+    },
+    "EfsMountTarget1": {
+      "Type": "AWS::EFS::MountTarget",
+      "Properties": {
+        "FileSystemId": {"Ref": "EfsFileSystem" },
+        "SubnetId": {"Fn::Select": ["0", {"Ref": "privateSubnets"}]},
+        "SecurityGroups": [{ "Ref": "SecGrpEfsFileSystem" }]
+      }
+    },
+    "EfsMountTarget2": {
+      "Type": "AWS::EFS::MountTarget",
+      "Properties": {
+        "FileSystemId": {"Ref": "EfsFileSystem" },
+        "SubnetId": {"Fn::Select": ["1", {"Ref": "privateSubnets"}]},
+        "SecurityGroups": [{ "Ref": "SecGrpEfsFileSystem" }]
+      }
+    },
+    "EfsMountTarget3": {
+      "Type": "AWS::EFS::MountTarget",
+      "Properties": {
+        "FileSystemId": {"Ref": "EfsFileSystem" },
+        "SubnetId": {"Fn::Select": ["2", {"Ref": "privateSubnets"}]},
+        "SecurityGroups": [{ "Ref": "SecGrpEfsFileSystem" }]
+      },
+      "Condition": "hasThreeSubnets"
+    },
+    "RecordSetEfsMountTargets": {
+      "Type": "AWS::Route53::RecordSet",
+      "Description": "DNS Records for the directing traffic to the efs mount targets",
+      "Properties": {
+        "Comment": {"Fn::Sub": "EFS Temp dir for the ${envInstance} instance of ${appName}"},
+        "HostedZoneId": {"Fn::ImportValue": {"Fn::Sub": "${platformStackName}-HostedZoneInternal-Id"}},
+        "Name": {"Fn::Sub": ["efs-${appName}-temp.${domain}", {"domain": {"Fn::ImportValue": {"Fn::Sub": "${platformStackName}-HostedZoneInternal-Domain"}}}]},
+        "Type": "CNAME",
+        "TTL": 300,
+        "ResourceRecords": [{"Fn::Sub": "${EfsFileSystem}.efs.${AWS::Region}.amazonaws.com"}]
+      },
+      "DependsOn": ["EfsFileSystem"]
+    },
+
+    "IamRole": {
+      "Type": "AWS::IAM::Role",
+      "Description": "IAM Role for ec2 instance to assume",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {"Service": [ "ec2.amazonaws.com"]},
+            "Action": [ "sts:AssumeRole"]
+          }]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "CloudWatch",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Resource": "*",
+                  "Action": [
+                    "autoscaling:Describe*",
+                    "cloudwatch:Describe*",
+                    "cloudwatch:List*",
+                    "cloudwatch:PutMetricAlarm*",
+                    "cloudwatch:PutMetricData",
+                    "cloudwatch:DeleteAlarms",
+                    "cloudwatch:Get*"
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "CloudformationAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Action": "cloudformation:Describe*",
+                  "Effect": "Allow",
+                  "Resource": "*"
+                },
+                {
+                  "Action": "cloudformation:SignalResource",
+                  "Effect": "Allow",
+                  "Resource": [{"Fn::Sub": "arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${platformName}-${envInstance}-${appName}-*/*"}]
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "ElbAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [{"Effect": "Allow", "Action": ["elasticloadbalancing:Describe*"], "Resource": "*"}]
+            }
+          },
+          {
+            "PolicyName": "EfsAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [{"Effect": "Allow", "Action": ["elasticfilesystem:Describe*"], "Resource": "*"}]
+            }
+          },
+          {
+            "PolicyName": "Ec2Tagging",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [{
+                "Effect": "Allow",
+                "Resource": "*",
+                "Action": [
+                  "ec2:CreateTags",
+                  "ec2:DeleteTags",
+                  "ec2:DescribeTags",
+                  "ec2:DescribeInstances"
+                ]
+              }]
+            }
+          },
+          {
+            "PolicyName": "ParameterStoreAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Action": "ssm:DescribeParameters",
+                  "Effect": "Allow",
+                  "Resource": "*"
+                },
+                {
+                  "Action": "kms:Decrypt",
+                  "Effect": "Allow",
+                  "Resource": {"Fn::Sub": ["arn:aws:kms:${AWS::Region}:${AWS::AccountId}:key/${keyId}",
+                    {"keyId":{"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-Parameter-KmsKey-Id"}}}]}
+                },
+                {
+                  "Action": "ssm:GetParameter*",
+                  "Effect": "Allow",
+                  "Resource": [
+                    {"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/shared.*"},
+                    {"Fn::Sub": "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/${envInstance}.${appName}.*"}
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "SecretsManagerSecrets",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Action": "kms:Decrypt",
+                  "Effect": "Allow",
+                  "Resource": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-Secret-KmsKey-Arn"}}
+                },
+                {
+                  "Action": ["secretsmanager:Get*", "secretsmanager:DescribeSecret", "secretsmanager:List*"],
+                  "Effect": "Allow",
+                  "Resource": {"Fn::Sub": "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${envInstance}/${appName}/*"}
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "S3Access",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Action": ["s3:GetBucketLocation", "s3:ListAllMyBuckets"],
+                  "Effect": "Allow",
+                  "Resource": "arn:aws:s3:::*"
+                },
+                {
+                  "Action": ["s3:List*", "s3:PutObject*"],
+                  "Effect": "Allow",
+                  "Resource": [
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}/system-reports"},
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}/system-reports/*"}
+                  ]
+                },
+                {
+                  "Action": ["s3:List*", "s3:GetObject"],
+                  "Effect": "Allow",
+                  "Resource": [
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}"},
+                    {"Fn::Sub": "arn:aws:s3:::${devopsBucket}/*"}
+                  ]}
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "IamInstanceProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Description": "IAM Role Profile name",
+      "Properties": {
+        "InstanceProfileName": {"Fn::Sub": ["${prefix}-${appName}-iam-profile", {"prefix": {"Fn::ImportValue": {"Fn::Sub": "${platformStackName}-resource-prefix"}}}]},
+        "Path": "/",
+        "Roles": [{"Ref": "IamRole"}]
+      },
+      "DependsOn": ["IamRole"]
+    },
+
+    "SecGrpEc2Instance": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Description": "Security Group for ec2 instances",
+      "Properties": {
+        "GroupName": {"Fn::Sub": ["${prefix}-${appName}-ec2-sg", {"prefix": {"Fn::ImportValue": {"Fn::Sub": "${platformStackName}-resource-prefix"}}}]},
+        "GroupDescription": {"Fn::Sub": "${envType} DeuceService Instances Security Group"},
+        "VpcId": {"Ref": "vpc"},
+        "SecurityGroupIngress": [
+                                         {"IpProtocol": "tcp", "FromPort": 8443, "ToPort": 8443, "SourceSecurityGroupId": {"Ref": "SecGrpLoadBalancer"}, "Description": "Inbound from Load Balancer"},
+          {"Fn::If": ["isNotProduction", {"IpProtocol": "tcp", "FromPort": 8443, "ToPort": 8443, "CidrIp": "10.78.0.0/15",   "Description": "WEX SoPo VPN Traffic"},         {"Ref": "AWS::NoValue"}]},
+          {"Fn::If": ["isNotProduction", {"IpProtocol": "tcp", "FromPort": 8443, "ToPort": 8443, "CidrIp": "10.178.32.0/21", "Description": "WEX remoteaccess VPN Traffic"}, {"Ref": "AWS::NoValue"}]}
+        ],
+        "Tags": [
+          {"Key": "Name", "Value": {"Fn::Sub": "${platformName} - ${envInstance} - ${appName} EC2"}}
+        ]
+      }
+    },
+    "SecGrpEgressLoadBalancerToEc2Instance": {
+      "Type": "AWS::EC2::SecurityGroupEgress",
+      "Description": "Egress rule to allow Load Balancer to talk to ec2 instances",
+      "Properties": {
+        "IpProtocol": "tcp", "FromPort": 8443, "ToPort": 8443, "DestinationSecurityGroupId": {"Ref": "SecGrpEc2Instance"}, "Description": "Load Balancer to EC2 Instance traffic",
+        "GroupId": {"Ref": "SecGrpLoadBalancer"}
+      },
+      "DependsOn": ["SecGrpEc2Instance", "SecGrpLoadBalancer"]
+    }
+  },
+
+  "Outputs": {
+    "OutputServiceEndpoint": {
+      "Description": "URL endpoint for applications to use to connect",
+      "Value": {"Fn::Sub": ["https://${appName}.${domain}/DeuceService/", {"domain": {"Fn::ImportValue": {"Fn::Sub": "${platformStackName}-HostedZoneInternal-Domain"}}}]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-service-endpoint"}}
+    },
+    "OutputIngressSecurityGroup": {
+      "Description": "Ingress SG to allow traffic to DeuceService",
+      "Value": {"Ref": "SecGrpLoadBalancer"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-ingress-sg"}}
+    },
+    "OutputEgressSecurityGroup": {
+      "Description": "Egress SG to allow traffic from DeuceService",
+      "Value": {"Ref": "SecGrpEc2Instance"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-egress-sg"}}
+    },
+
+    "OutputEfsHostname": {
+      "Description": "EFS url for DeuceService Temp",
+      "Value": {"Fn::Sub": ["efs-${appName}-temp.${domain}", {"domain": {"Fn::ImportValue": {"Fn::Sub": "${platformStackName}-HostedZoneInternal-Domain"}}}]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-efs-hostname"}}
+    },
+    "OutputEfsIngressSecurityGroup": {
+      "Description": "Ingress SG to allow traffic to EFS",
+      "Value": {"Ref": "SecGrpEfsFileSystem"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-efs-ingress-sg"}}
+    },
+    "OutputIamProfile": {
+      "Description": "IAM Role for EC2 Instances",
+      "Value": {"Ref": "IamInstanceProfile"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-iam-instance-profile"}}
+    },
+    "OutputTargetGroup": {
+      "Description": "Target Group for EC2 Instances",
+      "Value": {"Ref": "TargetGroup"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-target-group"}}
+    }
+  }
+}

@@ -1,0 +1,77 @@
+---
+
+- name: sitesync service provision master playbook
+  hosts: localhost
+  become: yes
+  become_user: root
+  vars_files:
+    - /etc/ansible/variables.yml
+
+  pre_tasks:
+    - name: Set Keystore S3 Bucket
+      set_fact:
+        keystore_s3_bucket: "{{ keystore_s3_url | regex_replace('^s3://((\\w+|\\-)*)\\/.*$', '\\1') }}"
+
+    - name: Set Keystore S3 Key
+      set_fact:
+        keystore_s3_key: "{{ keystore_s3_url | regex_replace('^s3://[0-9a-zA-Z\\-]*\\/(.*\\/.*)$', '\\1') }}"
+
+    - name: Set Truststore S3 Bucket
+      set_fact:
+        truststore_s3_bucket: "{{ truststore_s3_url | regex_replace('^s3://((\\w+|\\-)*)\\/.*$', '\\1') }}"
+
+    - name: Set Truststore S3 Key
+      set_fact:
+        truststore_s3_key: "{{ truststore_s3_url | regex_replace('^s3://[0-9a-zA-Z\\-]*\\/(.*\\/.*)$', '\\1') }}"
+
+    - name: Download Keystore
+      aws_s3:
+        bucket: "{{ keystore_s3_bucket }}"
+        object: "{{ keystore_s3_key }}"
+        dest: "{{ keystore_download_location }}"
+        mode: get
+
+    - name: Correct Keystore Ownership
+      file:
+        path: "{{ keystore_download_location }}"
+        owner: root
+        group: root
+        mode: 0600
+
+    - name: Download TrustStore
+      aws_s3:
+        bucket: "{{ truststore_s3_bucket }}"
+        object: "{{ truststore_s3_key }}"
+        dest: "{{ truststore_download_location }}"
+        mode: get
+
+    - name: Correct TrustStore Ownership
+      file:
+        path: "{{ truststore_download_location }}"
+        owner: root
+        group: root
+        mode: 0600
+
+  roles:
+    - base
+    - chrony
+    - jdk
+    - nexus_artifact
+    - dynamic_spring_properties
+    - splunk
+    - sumologic
+    - trendmicro
+
+  post_tasks:
+    - name: Generate PCI System Report
+      shell: ansible_scripts/ec2/system_report.sh
+      args:
+        chdir: /root
+      register: system_report
+
+    - name: Export PCI System Report
+      aws_s3:
+        bucket: "{{devops_bucket}}"
+        object: "system-reports/{{host_environment}}/{{system_report.stdout}}"
+        src: "/root/{{system_report.stdout}}"
+        mode: put

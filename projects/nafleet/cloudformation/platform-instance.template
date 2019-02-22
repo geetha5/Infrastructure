@@ -1,0 +1,313 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "MWD - NA-Fleet - Shared resources between different applications within a contained environment",
+
+  "Parameters": {
+    "platformName": {
+      "Type": "String",
+      "Description": "Platform Name",
+      "Default": "nafleet"
+    },
+    "envType": {
+      "Type": "String",
+      "Description": "designated environment type",
+      "Default": "dev",
+      "AllowedValues": ["dev", "stage", "prod"]
+    },
+    "envInstance": {
+      "Type": "String",
+      "Description": "unique short name for this Platform Instance, e.g. sit, dit, prd, dbf",
+      "MinLength": 2,
+      "MaxLength": 10,
+      "AllowedPattern": "^[a-z][a-z0-9\\-]*$",
+      "ConstraintDescription": "Must start with a letter, only contain lower-case letters, '-', and/or numbers"
+    },
+    "accountStackName": {
+      "Type": "String",
+      "Description": "parent stack name",
+      "Default": "account-bootstrap"
+    },
+    "vpc": {
+      "Type": "AWS::EC2::VPC::Id",
+      "Description": "VPC to create resources under"
+    },
+    "privateSubnets": {
+      "Type": "List<AWS::EC2::Subnet::Id>",
+      "Description": "Private Subnets"
+    },
+    "publicSubnets": {
+      "Type": "List<AWS::EC2::Subnet::Id>",
+      "Description": "Public subnets"
+    },
+    "topLevelDomain": {
+      "Type": "String",
+      "Description": "parent dns record",
+      "Default": "wexfleetweb.com"
+    }
+  },
+
+  "Conditions": {
+    "isDevEnv": {"Fn::Equals": [{"Ref": "envType"}, "dev"]},
+    "isNotDevEnv": {"Fn::Not": [{"Fn::Equals": [{"Ref": "envType"}, "dev"]}]},
+    "isStageEnv": {"Fn::Equals": [{"Ref": "envType"}, "stage"]},
+    "isProdEnv": {"Fn::Equals": [{"Ref": "envType"}, "prod"]},
+    "isNotProdEnv": {"Fn::Not": [{"Fn::Equals": [{"Ref": "envType"}, "prod"]}]}
+  },
+
+  "Resources": {
+    "HostedZoneExternal": {
+      "Type": "AWS::Route53::HostedZone",
+      "Description": "DNS HostedZone for external/public accessible resources/applications",
+      "Properties": {
+        "HostedZoneConfig": {"Comment": {"Fn::Sub": "External DNS for the ${envInstance} instance of the ${platformName} platform"}},
+        "Name": {"Fn::Sub": "${envInstance}.${topLevelDomain}."}
+      }
+    },
+    "HttpsCertExternal": {
+      "Type": "AWS::CertificateManager::Certificate",
+      "Description": "TLS Cert for HTTPS communication to the Public ALBs",
+      "Properties": {
+        "DomainName": {"Fn::Sub": "${envInstance}.${topLevelDomain}"},
+        "SubjectAlternativeNames": [{"Fn::Sub": "*.${envInstance}.${topLevelDomain}"}],
+        "ValidationMethod": "DNS",
+        "Tags": [
+          {"Key": "Name", "Value": {"Fn::Sub": "${platformName} - ${envInstance} - Public Https Cert"}}
+        ]
+      },
+      "DependsOn": ["HostedZoneExternal"]
+    },
+
+    "HostedZoneInternal": {
+      "Type": "AWS::Route53::HostedZone",
+      "Description": "DNS HostedZone for internal/private accessible resources/applications",
+      "Properties": {
+        "Name": {"Fn::Sub": "${envInstance}-internal.${topLevelDomain}."},
+        "HostedZoneConfig": {"Comment": {"Fn::Sub": "Internal DNS for the ${envInstance} instance of the ${platformName} platform"}},
+        "VPCs": [
+          {"VPCId": {"Ref": "vpc"}, "VPCRegion": {"Ref": "AWS::Region"}}
+        ]
+      }
+    },
+    "HttpsCertInternal": {
+      "Type": "AWS::CertificateManager::Certificate",
+      "Description": "TLS Cert for HTTPS communication to private ALBs",
+      "Properties": {
+        "DomainName": {"Fn::Sub": "${envInstance}-internal.${topLevelDomain}"},
+        "SubjectAlternativeNames": [{"Fn::Sub": "*.${envInstance}-internal.${topLevelDomain}"}],
+        "ValidationMethod": "DNS",
+        "Tags": [
+          {"Key": "Name", "Value": {"Fn::Sub": "${platformName} - ${envInstance} - Private Https Cert"}}
+        ]
+      },
+      "DependsOn": ["HostedZoneInternal"]
+    },
+
+    "SecGrpPublicAlb": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Description": "Allow Traffic to External/Public facing Application Load Balancers",
+      "Properties": {
+        "VpcId": {"Ref": "vpc"},
+        "GroupDescription": "Access to public facing Application Load Balancers",
+        "GroupName": {"Fn::Sub": "${platformName}-${envInstance}-alb-sg"},
+        "SecurityGroupIngress": [
+          {"Fn::If": ["isDevEnv",    {"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "CidrIp": "208.64.192.0/22", "Description": "All Encrypted (HTTPS) Public Traffic from WEX VPN"},                {"Ref": "AWS::NoValue"}]},
+          {"Fn::If": ["isDevEnv",    {"IpProtocol": "tcp", "FromPort": 80,  "ToPort": 80,  "CidrIp": "208.64.192.0/22", "Description": "All (HTTP) Public Traffic from WEX VPN to be redirected to HTTPS"}, {"Ref": "AWS::NoValue"}]},
+          {"Fn::If": ["isNotDevEnv", {"IpProtocol": "tcp", "FromPort": 443, "ToPort": 443, "CidrIp": "0.0.0.0/0",       "Description": "All Encrypted (HTTPS) Traffic"},                                    {"Ref": "AWS::NoValue"}]},
+          {"Fn::If": ["isNotDevEnv", {"IpProtocol": "tcp", "FromPort": 80,  "ToPort": 80,  "CidrIp": "0.0.0.0/0",       "Description": "All (HTTP) Traffic"},                                               {"Ref": "AWS::NoValue"}]}
+        ],
+        "SecurityGroupEgress":  [
+          {"IpProtocol": -1, "CidrIp": "127.0.0.1/32", "Description": "Localhost Loopback"}
+        ],
+        "Tags": [
+          {"Key": "Name", "Value": {"Fn::Sub": "${platformName} - ${envInstance} - Public Shared ALB Instance"}}
+        ]
+      }
+    },
+
+    "PublicAlbInstance": {
+      "Type": "AWS::ElasticLoadBalancingV2::LoadBalancer",
+      "Description": "Shared Public ALB",
+      "Properties": {
+        "Type": "application",
+        "Scheme": "internet-facing",
+        "Name": {"Fn::Sub": "${platformName}-${envInstance}-public-alb"},
+        "SecurityGroups": [{"Ref": "SecGrpPublicAlb"}],
+        "Subnets": {"Ref": "publicSubnets"},
+        "Tags": [
+          {"Key": "Name", "Value": {"Fn::Sub": "${platformName} - ${envInstance} - Public Shared"}}
+        ]
+      },
+      "DependsOn": ["SecGrpPublicAlb"]
+    },
+
+    "ListenerHttp": {
+      "Type": "Custom::ElasticLoadBalancingV2_Listener",
+      "Description": "HTTP Listener with generic redirect to HTTPS",
+      "Properties": {
+        "ServiceToken": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-cfELBv2Listener-Arn"}},
+        "DefaultActions" : [
+          {"Type": "redirect", "RedirectConfig": {"Protocol": "HTTPS", "Port": 443, "StatusCode": "HTTP_301"}}
+        ],
+        "LoadBalancerArn" : {"Ref": "PublicAlbInstance"},
+        "Port" : 80,
+        "Protocol" : "HTTP"
+      },
+      "DependsOn": ["PublicAlbInstance"]
+    },
+    "ListenerHttps": {
+      "Type": "Custom::ElasticLoadBalancingV2_Listener",
+      "Description": "HTTPS Listener for inbound traffic to services",
+      "Properties": {
+        "ServiceToken": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-cfELBv2Listener-Arn"}},
+        "DefaultActions": [{"Type": "fixed-response", "FixedResponseConfig": {"StatusCode": "404"}}],
+        "LoadBalancerArn": {"Ref": "PublicAlbInstance"},
+        "Port": 443,
+        "Protocol": "HTTPS",
+        "SslPolicy": "ELBSecurityPolicy-TLS-1-2-Ext-2018-06",
+        "Certificates": [{"CertificateArn": {"Ref": "HttpsCertExternal"}}]
+      },
+      "DependsOn": ["PublicAlbInstance", "HttpsCertExternal"]
+    },
+
+    "RecordSetGroupPublicALB": {
+      "Type": "AWS::Route53::RecordSetGroup",
+      "Description": "DNS entry for the public load balancer",
+      "Properties": {
+        "Comment": {"Fn::Sub": "Public ALB for the ${envInstance} instance of the ${platformName} platform"},
+        "HostedZoneId": {"Ref": "HostedZoneExternal"},
+        "RecordSets": [{
+          "Name": {"Fn::Sub": "${envInstance}.${topLevelDomain}"},
+          "Type": "A",
+          "AliasTarget": {
+            "HostedZoneId": {"Fn::GetAtt": ["PublicAlbInstance", "CanonicalHostedZoneID"]},
+            "DNSName": {"Fn::GetAtt": ["PublicAlbInstance", "DNSName"]}
+          }
+        }, {
+          "Name": {"Fn::Sub": "*.${envInstance}.${topLevelDomain}"},
+          "Type": "A",
+          "AliasTarget": {
+            "HostedZoneId": {"Fn::GetAtt": ["PublicAlbInstance", "CanonicalHostedZoneID"]},
+            "DNSName": {"Fn::GetAtt": ["PublicAlbInstance", "DNSName"]}
+          }
+        }]
+      },
+      "DependsOn": ["PublicAlbInstance", "HostedZoneExternal"]
+    },
+
+    "SubnetGroupRds": {
+      "Type": "AWS::RDS::DBSubnetGroup",
+      "Description": "Subnet Group for RDS instances",
+      "Properties": {
+        "DBSubnetGroupDescription": "Internal Subnets for use by RDS instances",
+        "DBSubnetGroupName": {"Fn::Sub": "${platformName}-${envInstance}-rds-subnet-group"},
+        "SubnetIds": {"Ref": "privateSubnets"},
+        "Tags": [
+          {"Key": "Name", "Value": {"Fn::Sub": "${platformName} - ${envInstance} - RDS Internal Subnets"}}
+        ]
+      }
+    }
+  },
+
+  "Outputs": {
+    "OutputResourcePrefix": {
+      "Description": "Base prefix for resources names",
+      "Value": {"Fn::Sub": "${platformName}-${envInstance}"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-resource-prefix"}}
+    },
+
+    "OutputHostedZoneExternalId": {
+      "Description": "Delegate Hosted Zone for Account",
+      "Value": {"Ref": "HostedZoneExternal"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-HostedZoneExternal-Id"}}
+    },
+    "OutputHostedZoneExternalDomain": {
+      "Description": "External parent DNS Id for resources within this account",
+      "Value": {"Fn::Sub": "${envInstance}.${topLevelDomain}"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-HostedZoneExternal-Domain"}}
+    },
+    "OutputHostedZoneInternalDomain": {
+      "Description": "Delegate Hosted Zone for Account",
+      "Value": {"Fn::Sub": "${envInstance}-internal.${topLevelDomain}"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-HostedZoneInternal-Domain"}}
+    },
+    "OutputHostedZoneInternalId": {
+      "Description": "Internal Hosted Zone for Millennium Environment",
+      "Value": {"Ref": "HostedZoneInternal"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-HostedZoneInternal-Id"}}
+    },
+    "OutputHttpsCertExternal": {
+      "Description": "Certificate for TLS communication to Public ALB",
+      "Value": {"Ref": "HttpsCertExternal"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-HttpsCertExternal"}}
+    },
+    "OutputHttpsCertInternal": {
+      "Description": "Certificate for TLS communication to Private ALBs",
+      "Value": {"Ref": "HttpsCertInternal"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-HttpsCertInternal"}}
+    },
+    "OutputSecGrpPublicAlbId": {
+      "Description": "Security Group ID for the Shared Public ALB",
+      "Value": {"Ref": "SecGrpPublicAlb"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-SecGrpPublicAlb-Id"}}
+    },
+
+    "OutputPublicAlbInstanceArn": {
+      "Description": "Public Shared Application Load Balancer Ref Id",
+      "Value": {"Ref": "PublicAlbInstance"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-PublicAlbInstance-Arn"}}
+    },
+    "OutputPublicAlbInstanceCNHostedZoneId": {
+      "Description": "Public Shared Application Load Balancer CanonicalHostedZoneID",
+      "Value": {"Fn::Sub": "${PublicAlbInstance.CanonicalHostedZoneID}"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-PublicAlbInstance-CanonicalHostedZoneID"}}
+    },
+    "OutputPublicAlbInstanceDNSName": {
+      "Description": "Public Shared Application Load Balancer DNSName",
+      "Value": {"Fn::GetAtt": ["PublicAlbInstance", "DNSName"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-PublicAlbInstance-DNSName"}}
+    },
+    "OutputPublicAlbInstanceFullName": {
+      "Description": "Public Shared Application Load Balancer LoadBalancerFullName",
+      "Value": {"Fn::GetAtt": ["PublicAlbInstance", "LoadBalancerFullName"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-PublicAlbInstance-FullName"}}
+    },
+    "OutputPublicAlbInstanceLoadBalancerName": {
+      "Description": "Public Shared Application Load Balancer LoadBalancerFullName",
+      "Value": {"Fn::Sub": "${PublicAlbInstance.LoadBalancerName}"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-PublicAlbInstance-LoadBalancerName"}}
+    },
+
+    "OutputListenerHttpArn": {
+      "Description": "Public ALB Listener for HTTP traffic",
+      "Value": {"Ref": "ListenerHttp"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-ListenerHttp-Arn"}}
+    },
+    "OutputListenerHttpPort": {
+      "Description": "Public ALB Listener Port for HTTP traffic",
+      "Value": {"Fn::GetAtt": ["ListenerHttps", "Port"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-ListenerHttp-Port"}}
+    },
+
+    "OutputListenerHttpsArn": {
+      "Description": "Public ALB Listener for Https traffic",
+      "Value": {"Ref": "ListenerHttps"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-ListenerHttps-Arn"}}
+    },
+    "OutputListenerHttpsPort": {
+      "Description": "Public ALB Listener Port for Https traffic",
+      "Value": {"Fn::GetAtt": ["ListenerHttps", "Port"]},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-ListenerHttps-Port"}}
+    },
+
+    "OutputRecordSetGroupPublicALB": {
+      "Description": "DNS Record for A Record Alias to Public ALB",
+      "Value": {"Ref": "RecordSetGroupPublicALB"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-RecordSetGroupPublicALB-Name"}}
+    },
+    "OutputRdsSubnetGroup": {
+      "Description": "RDS Subnet Group",
+      "Value": {"Ref": "SubnetGroupRds"},
+      "Export": {"Name": {"Fn::Sub": "${AWS::StackName}-RdsSubnetGroup-Id"}}
+    }
+  }
+}

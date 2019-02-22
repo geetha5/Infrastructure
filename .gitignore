@@ -1,0 +1,14 @@
+.idea
+.vscode
+.gradle
+build/
+temp/
+venv
+gradle.properties
+cf_resources/**/test/test_cases
+cf_resources/**/*.pyc
+.gradletasknamecache
+
+node_modules/
+.DS_Store
+*.iml

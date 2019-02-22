@@ -1,0 +1,29 @@
+---
+
+# base variables
+host_purpose: web-proxy
+host_environment: dev
+owning_group: mobile
+
+# splunk variables
+splunk_rpm_url: "s3://wex-mobile-devops/installers/splunk/splunkforwarder-6.6.3-e21ee54bc796-linux-2.6-x86_64.rpm"
+
+# sumologic variables
+sumologic_rpm_url: s3://wex-mobile-devops/installers/sumologic/SumoCollector-19.227-15.x86_64.rpm
+sumologic_access_id_param: dev.sumologic.accessid
+sumologic_access_key_param: dev.sumologic.accesskey
+sumologic_client_name: "web-proxy-{{host_environment}}"
+
+sumologic_sources:
+  bootstrap_source:
+    name: bootstrap
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/bootstrap"
+    pathExpression: "/var/log/bootstrap.log"
+  ansible_source:
+    name: ansible
+    category: "{{owning_group}}/{{ansible_ec2_placement_region}}/{{host_purpose}}/{{host_environment}}/ansible"
+    pathExpression: "/var/log/ansible.log"
+
+# trend micro variables
+
+# squid variables

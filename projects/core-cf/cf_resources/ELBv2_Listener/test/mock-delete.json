@@ -1,0 +1,26 @@
+{
+  "RequestType": "Delete",
+  "ServiceToken": "arn:aws:lambda:us-east-1:518554605247:function:cloud9-albListenerRedirect-albListenerRedirect-1F30S8SFKE8X4",
+  "ResponseURL": "https://cloudformation-custom-resource-response-useast1.s3.amazonaws.com/arn%3Aaws%3Acloudformation%3Aus-east-1%3A518554605247%3Astack/mwd-dev-mp-poc/3a610b50-e1ec-11e8-bbb4-50faeaabf0d1%7CListenerHttpRedirectRule%7Cf3d4fb15-ad31-452d-8eb5-7eb459acd1fc?AWSAccessKeyId=AKIAJBBWV6EJETUI7HUQ&Expires=1541710468&Signature=dT57%2BwE5EPW6MDcxtmMPEZxijWI%3D",
+  "StackId": "arn:aws:cloudformation:us-east-1:518554605247:stack/mwd-dev-mp-poc/3a610b50-e1ec-11e8-bbb4-50faeaabf0d1",
+  "RequestId": "f3d4fb15-ad31-452d-8eb5-7eb459acd1fc",
+  "LogicalResourceId": "ListenerHttpRedirectRule",
+  "PhysicalResourceId": "arn:aws:elasticloadbalancing:us-east-1:518554605247:listener/app/mwd-dev-mp-poc-public-alb/f0b2ec5a5fc86215/654e999f01bfa6b3",
+  "ResourceType": "Custom::AlbListener",
+  "ResourceProperties": {
+    "ServiceToken": "arn:aws:lambda:us-east-1:518554605247:function:cloud9-albListenerRedirect-albListenerRedirect-1F30S8SFKE8X4",
+    "LoadBalancerArn": "arn:aws:elasticloadbalancing:us-east-1:518554605247:loadbalancer/app/mwd-dev-mp-poc-public-alb/f0b2ec5a5fc86215",
+    "DefaultActions": [
+      {
+        "Type": "redirect",
+        "RedirectConfig": {
+          "Port": "443",
+          "Protocol": "HTTPS",
+          "StatusCode": "HTTP_301"
+        }
+      }
+    ],
+    "Port": "80",
+    "Protocol": "HTTP"
+  }
+}

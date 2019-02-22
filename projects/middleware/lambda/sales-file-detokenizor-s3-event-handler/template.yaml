@@ -1,0 +1,13 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: An AWS Serverless Specification template describing your function.
+Resources:
+  SalesFileDetokenizorNotifier:
+    Type: 'AWS::Serverless::Function'
+    Properties:
+      Description: Handle S3 Add File Events and delegate to Sales File Detokenizor
+      Handler: index.handler
+      MemorySize: 512
+      Role: 'arn:aws:iam::518554605247:role/sales-file-detokenizor-lambda'
+      Runtime: nodejs8.10
+      Timeout: 300

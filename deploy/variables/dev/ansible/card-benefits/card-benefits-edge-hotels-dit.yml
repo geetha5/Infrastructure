@@ -1,0 +1,53 @@
+---
+
+# base variables
+owning_group: mwd
+devops_bucket: "wex-mobile-devops"
+
+host_platform: card-benefits
+host_purpose: edge-hotel-service
+host_environment: dev
+host_instance: dit
+
+# splunk variables
+splunk_mgmt_port: 6089
+
+
+sumologic_sources:
+  bootstrap_source:
+    name: bootstrap
+    category: "{{host_platform}}/{{host_purpose}}/{{host_instance}}/{{ansible_ec2_placement_region}}/bootstrap"
+    pathExpression: "/var/log/bootstrap.log"
+  cloud_init_source:
+    name: cloud-init
+    category: "{{host_platform}}/{{host_purpose}}/{{host_instance}}/{{ansible_ec2_placement_region}}/cloud-init"
+    pathExpression: "/var/log/cloud-init-output.log"
+  ansible_source:
+    name: ansible
+    category: "{{host_platform}}/{{host_purpose}}/{{host_instance}}/{{ansible_ec2_placement_region}}/ansible"
+    pathExpression: "/var/log/ansible.log"
+#  app_source:
+#    name: app
+#    category: "{{host_platform}}/{{host_purpose}}/{{host_instance}}/{{ansible_ec2_placement_region}}/app"
+#    pathExpression: "/var/log/{{host_purpose}}/app.log"
+  app_source:
+    name: app
+    category: "{{host_platform}}/{{host_purpose}}/{{host_instance}}/{{ansible_ec2_placement_region}}/app"
+    pathExpression: "/var/log/app.log"
+
+# jdk variables
+jdk_rpm_name: jdk1.8
+
+# dynamic spring properties
+spring_props_file: "/root/application-{{host_instance}}.properties"
+spring_props_properties:
+  cloud-search-search-endpoint:
+    prop_name: "aws.cloud-search.search-endpoint"
+    param_store: "no"
+    encrypted: "no"
+    value: "https://search-test-regions-xbc43d3fqamktdvegvyjwkxete.us-east-1.cloudsearch.amazonaws.com"
+  cloud-search-document-endpoint:
+    prop_name: "aws.cloud-search.document-endpoint"
+    param_store: "no"
+    encrypted: "no"
+    value: "https://doc-test-regions-xbc43d3fqamktdvegvyjwkxete.us-east-1.cloudsearch.amazonaws.com"

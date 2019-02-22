@@ -1,0 +1,650 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Kafka Cluster Common Resources",
+  "Parameters": {
+    "environment": {
+      "Description": "The environment for the application stack",
+      "Type": "String",
+      "Default": "dev"
+    },
+    "vpcStackName": {
+      "Description": "The stack name for the VPC CF stack",
+      "Type": "String"
+    },
+    "clusterName": {
+      "Description": "The name of the kafka cluster by default its just kafka but it allows for clusters side by side",
+      "Type": "String",
+      "Default": "kafka"
+    },
+    "enableSsh": {
+      "Type": "String",
+      "Description": "If to enable ssh on instances",
+      "Default": "no",
+      "AllowedValues": [
+        "yes",
+        "no"
+      ]
+    },
+    "devopsBucket": {
+      "Description": "The devops bucket to use",
+      "Type": "String",
+      "Default": "wex-mobile-devops"
+    },
+    "environmentDevopsBucket": {
+      "Description": "The devops bucket for the environment",
+      "Type": "String"
+    },
+    "hostedZoneId": {
+      "Description": "The hosted zone id for updating DNS names",
+      "Type": "String"
+    }
+  },
+  "Mappings": {
+    "SharedEnvMap": {
+      "dit": { "baseEnv": "dev" },
+      "dev": { "baseEnv": "dev" },
+      "stage": { "baseEnv": "stage" },
+      "prod": { "baseEnv": "prod" }
+    }
+  },
+  "Conditions": {
+    "EnableSsh": { "Fn::Equals": [ { "Ref": "enableSsh" }, "yes" ] },
+    "DevEnvironment": { "Fn::Or": [
+      { "Fn::Equals": [ { "Ref": "environment" }, "dev" ] },
+      { "Fn::Equals": [ { "Ref": "environment" }, "dit" ] },
+      { "Fn::Equals": [ { "Ref": "environment" }, "test" ] }
+    ] }
+  },
+  "Resources": {
+    "ZookeeperInstanceIamRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "ec2.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+          }]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "CloudWatch",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "autoscaling:Describe*",
+                    "cloudwatch:Describe*",
+                    "cloudwatch:List*",
+                    "cloudwatch:PutMetricAlarm*",
+                    "cloudwatch:PutMetricData",
+                    "cloudwatch:DeleteAlarms",
+                    "cloudwatch:Get*"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "Ec2Tagging",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:CreateTags",
+                    "ec2:DeleteTags",
+                    "ec2:DescribeTags",
+                    "ec2:DescribeInstances"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "CloudformationAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "cloudformation:Describe*",
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "cloudformation:SignalResource",
+                  "Resource": { "Fn::Join": [ "", [ "arn:aws:cloudformation:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":stack/", "zookeeper-", { "Ref": "clusterName" },
+                    "-*-", { "Ref": "environment" }, "/*" ] ] }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "ParameterStoreAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "ssm:DescribeParameters",
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "ssm:GetParameter",
+                  "Resource": [
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/",
+                      { "Fn::FindInMap": [ "SharedEnvMap", { "Ref": "environment" }, "baseEnv" ] }, ".sumologic.accessid" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/",
+                      { "Fn::FindInMap": [ "SharedEnvMap", { "Ref": "environment" }, "baseEnv" ] }, ".sumologic.accesskey" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/",
+                      { "Fn::FindInMap": [ "SharedEnvMap", { "Ref": "environment" }, "baseEnv" ] }, ".supervisor.password" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/",
+                      { "Fn::FindInMap": [ "SharedEnvMap", { "Ref": "environment" }, "baseEnv" ] }, ".trendmicro.tenant-id" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/",
+                      { "Fn::FindInMap": [ "SharedEnvMap", { "Ref": "environment" }, "baseEnv" ] }, ".trendmicro.token" ] ] }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "kms:Decrypt",
+                  "Resource": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-ParameterStoreKmsKey-Arn" } }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "S3Access",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetBucketLocation",
+                    "s3:ListAllMyBuckets"
+                  ],
+                  "Resource": "arn:aws:s3:::*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:List*",
+                    "s3:GetObject"
+                  ],
+                  "Resource": [
+                    { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "devopsBucket" } ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "devopsBucket" }, "/*" ] ] }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:List*",
+                    "s3:GetObject",
+                    "s3:PutObject"
+                  ],
+                  "Resource": [
+                    { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "environmentDevopsBucket" } ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "environmentDevopsBucket" }, "/*" ] ] }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "Route53",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Action": [
+                    "route53:List*",
+                    "route53:Get*"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": "*"
+                },
+                {
+                  "Action": "route53:ChangeResourceRecordSets",
+                  "Effect": "Allow",
+                  "Resource": { "Fn::Join": [ "", [ "arn:aws:route53:::hostedzone/", { "Ref": "hostedZoneId" } ] ] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "ZooKeeperInstanceIamProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "InstanceProfileName": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "zookeeper", { "Ref": "clusterName" }, "iam-profile" ] ] },
+        "Path": "/",
+        "Roles": [ { "Ref": "ZookeeperInstanceIamRole" } ]
+      }
+    },
+    "ZooKeeperIngressSg": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupName": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "zookeeper", { "Ref": "clusterName" }, "ingress-SG" ] ] },
+        "GroupDescription": { "Fn::Join": [ " ", [ { "Ref": "environment" }, "Zookeeper", { "Ref": "clusterName" }, "Ingress Security Group" ] ] },
+        "VpcId": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-Vpc-Id" } }
+      }
+    },
+    "ZooKeeperInstanceSg": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupName": { "Fn::Join": [ "-", [ { "Ref": "environment" }, "zookeeper", { "Ref": "clusterName" }, "SG" ] ] },
+        "GroupDescription": { "Fn::Join": [ " ", [ { "Ref": "environment" }, "Zookeeper", { "Ref": "clusterName" }, "Instance Security Group" ] ] },
+        "VpcId": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-Vpc-Id" } },
+        "SecurityGroupIngress": [
+          {
+            "SourceSecurityGroupId": { "Ref": "KafkaBrokerInstanceSg" },
+            "IpProtocol": "tcp",
+            "FromPort": 2181,
+            "ToPort": 2181
+          },
+          {
+            "SourceSecurityGroupId": { "Ref": "ZooKeeperIngressSg" },
+            "IpProtocol": "tcp",
+            "FromPort": 2181,
+            "ToPort": 2181
+          },
+          {
+            "SourceSecurityGroupId": { "Ref": "ZooKeeperIngressSg" },
+            "IpProtocol": "tcp",
+            "FromPort": 2888,
+            "ToPort": 2888
+          },
+          {
+            "SourceSecurityGroupId": { "Ref": "ZooKeeperIngressSg" },
+            "IpProtocol": "tcp",
+            "FromPort": 3888,
+            "ToPort": 3888
+          }
+        ]
+      }
+    },
+    "ZookeeperClientPortDev78NetIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Condition": "DevEnvironment",
+      "Properties": {
+        "GroupId": { "Ref": "ZooKeeperInstanceSg" },
+        "IpProtocol": "tcp",
+        "FromPort": 2181,
+        "ToPort": 2181,
+        "CidrIp": "10.78.0.0/16"
+      }
+    },
+    "ZookeeperClientPortDev79NetIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Condition": "DevEnvironment",
+      "Properties": {
+        "GroupId": { "Ref": "ZooKeeperInstanceSg" },
+        "IpProtocol": "tcp",
+        "FromPort": 2181,
+        "ToPort": 2181,
+        "CidrIp": "10.79.0.0/16"
+      }
+    },
+    "ZookeeperSshDev78NetIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Condition": "EnableSsh",
+      "Properties": {
+        "GroupId": { "Ref": "ZooKeeperInstanceSg" },
+        "IpProtocol": "tcp",
+        "FromPort": 22,
+        "ToPort": 22,
+        "CidrIp": "10.78.0.0/16"
+      }
+    },
+    "ZookeeperSshDev79NetIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Condition": "EnableSsh",
+      "Properties": {
+        "GroupId": { "Ref": "ZooKeeperInstanceSg" },
+        "IpProtocol": "tcp",
+        "FromPort": 22,
+        "ToPort": 22,
+        "CidrIp": "10.79.0.0/16"
+      }
+    },
+    "KafkaBrokerInstanceIamRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "ec2.amazonaws.com" ]
+            },
+            "Action": [ "sts:AssumeRole" ]
+          }]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "CloudWatch",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "autoscaling:Describe*",
+                    "cloudwatch:Describe*",
+                    "cloudwatch:List*",
+                    "cloudwatch:PutMetricAlarm*",
+                    "cloudwatch:PutMetricData",
+                    "cloudwatch:DeleteAlarms",
+                    "cloudwatch:Get*"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "Ec2Tagging",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:CreateTags",
+                    "ec2:DeleteTags",
+                    "ec2:DescribeTags",
+                    "ec2:DescribeInstances"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "EbsMounting",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:DescribeVolume*"
+                  ],
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "ec2:AttachVolume"
+                  ],
+                  "Resource": [
+                    { "Fn::Join": [ "", [ "arn:aws:ec2:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":volume/*" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ec2:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":instance/*" ] ] }
+                  ],
+                  "Condition": {
+                    "StringEquals": { "ec2:ResourceTag/KafkaCluster": { "Ref": "clusterName" } }
+                  }
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "kms:RetireGrant",
+                    "kms:CreateGrant",
+                    "kms:ReEncrypt*",
+                    "kms:GenerateDataKey*",
+                    "kms:Encrypt",
+                    "kms:DescribeKey",
+                    "kms:Decrypt"
+                  ],
+                  "Resource": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-Ec2KmsKey-Arn" } }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "ParameterStoreAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "ssm:DescribeParameters",
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "ssm:GetParameter",
+                  "Resource": [
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".sumologic.accessid" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".sumologic.accesskey" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".supervisor.password" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".trendmicro.tenant-id" ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".trendmicro.token" ] ] }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "kms:Decrypt",
+                  "Resource": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-ParameterStoreKmsKey-Arn" } }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "CloudformationAccess",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": "cloudformation:Describe*",
+                  "Resource": "*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": "cloudformation:SignalResource",
+                  "Resource": { "Fn::Join": [ "", [ "arn:aws:cloudformation:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":stack/", "kafka-broker-", { "Ref": "clusterName" },
+                    "-*-", { "Ref": "environment" } ,"/*" ] ] }
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "S3Access",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:GetBucketLocation",
+                    "s3:ListAllMyBuckets"
+                  ],
+                  "Resource": "arn:aws:s3:::*"
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:List*",
+                    "s3:GetObject"
+                  ],
+                  "Resource": [
+                    { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "devopsBucket" } ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "devopsBucket" }, "/*" ] ] }
+                  ]
+                },
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "s3:List*",
+                    "s3:GetObject",
+                    "s3:PutObject"
+                  ],
+                  "Resource": [
+                    { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "environmentDevopsBucket" } ] ] },
+                    { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "environmentDevopsBucket" }, "/*" ] ] }
+                  ]
+                }
+              ]
+            }
+          },
+          {
+            "PolicyName": "Route53",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Action": [
+                    "route53:List*",
+                    "route53:Get*"
+                  ],
+                  "Effect": "Allow",
+                  "Resource": "*"
+                },
+                {
+                  "Action": "route53:ChangeResourceRecordSets",
+                  "Effect": "Allow",
+                  "Resource": { "Fn::Join": [ "", [ "arn:aws:route53:::hostedzone/", { "Ref": "hostedZoneId" } ] ] }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "KafkaBrokerInstanceIamProfile": {
+      "Type": "AWS::IAM::InstanceProfile",
+      "Properties": {
+        "InstanceProfileName": { "Fn::Join": [ "-", [ { "Ref": "environment" }, { "Ref": "clusterName" }, "broker", "iam-profile" ] ] },
+        "Path": "/",
+        "Roles": [ { "Ref": "KafkaBrokerInstanceIamRole" } ]
+      }
+    },
+    "KafkaIngressSg": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupName": { "Fn::Join": [ "-", [ { "Ref": "environment" }, { "Ref": "clusterName" }, "broker", "ingress-SG" ] ] },
+        "GroupDescription": { "Fn::Join": [ " ", [ { "Ref": "environment" }, { "Ref": "clusterName" }, "Broker", "Ingress Security Group" ] ] },
+        "VpcId": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-Vpc-Id" } }
+      }
+    },
+    "KafkaBrokerInstanceSg": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupName": { "Fn::Join": [ "-", [ { "Ref": "environment" }, { "Ref": "clusterName" }, "broker", "SG" ] ] },
+        "GroupDescription": { "Fn::Join": [ " ", [ { "Ref": "environment" }, { "Ref": "clusterName" }, "Broker", "Instance Security Group" ] ] },
+        "VpcId": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-Vpc-Id" } },
+        "SecurityGroupIngress": [
+          {
+            "SourceSecurityGroupId": { "Ref": "KafkaIngressSg" },
+            "IpProtocol": "tcp",
+            "FromPort": 9092,
+            "ToPort": 9092
+          }
+        ]
+      }
+    },
+    "BrokerKafkaPortDev78NetIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Condition": "DevEnvironment",
+      "Properties": {
+        "GroupId": { "Ref": "KafkaBrokerInstanceSg" },
+        "IpProtocol": "tcp",
+        "FromPort": 9092,
+        "ToPort": 9092,
+        "CidrIp": "10.78.0.0/16"
+      }
+    },
+    "BrokerKafkaPortDev79NetIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Condition": "DevEnvironment",
+      "Properties": {
+        "GroupId": { "Ref": "KafkaBrokerInstanceSg" },
+        "IpProtocol": "tcp",
+        "FromPort": 9092,
+        "ToPort": 9092,
+        "CidrIp": "10.79.0.0/16"
+      }
+    },
+    "KafkaBrokerSshDev78NetIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Condition": "EnableSsh",
+      "Properties": {
+        "GroupId": { "Ref": "KafkaBrokerInstanceSg" },
+        "IpProtocol": "tcp",
+        "FromPort": 22,
+        "ToPort": 22,
+        "CidrIp": "10.78.0.0/16"
+      }
+    },
+    "KafkaBrokerSshDev79NetIngress": {
+      "Type": "AWS::EC2::SecurityGroupIngress",
+      "Condition": "EnableSsh",
+      "Properties": {
+        "GroupId": { "Ref": "KafkaBrokerInstanceSg" },
+        "IpProtocol": "tcp",
+        "FromPort": 22,
+        "ToPort": 22,
+        "CidrIp": "10.79.0.0/16"
+      }
+    }
+  },
+  "Outputs": {
+    "OutputZooKeeperIngressSgId": {
+      "Description": "The ingress security group id for the zookeeper servers",
+      "Value": { "Ref": "ZooKeeperIngressSg" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ZooKeeperIngressSg-Id" }
+      }
+    },
+    "OutputZooKeeperInstanceSgId": {
+      "Description": "The instance security group id for the zookeeper servers",
+      "Value": { "Ref": "ZooKeeperInstanceSg" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ZooKeeperInstanceSg-Id" }
+      }
+    },
+    "OutputKafkaIngressSgId": {
+      "Description": "The ingress security group id for the kafka servers",
+      "Value": { "Ref": "KafkaIngressSg" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-KafkaIngressSg-Id" }
+      }
+    },
+    "OutputKafkaBrokerInstanceSgId": {
+      "Description": "The instance security group id for the kafka broker servers",
+      "Value": { "Ref": "KafkaBrokerInstanceSg" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-KafkaBrokerInstanceSg-Id" }
+      }
+    },
+    "OutputZooKeeperIamProfileId": {
+      "Description": "The id of the IAM profile for the zookeeper servers",
+      "Value": { "Ref": "ZooKeeperInstanceIamProfile" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ZooKeeperIamInstanceProfile-Id" }
+      }
+    },
+    "OutputKafkaBrokerIamProfileId": {
+      "Description": "The id of the IAM profile for the kafka broker servers",
+      "Value": { "Ref": "KafkaBrokerInstanceIamProfile" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-KafkaBrokerIamInstanceProfile-Id" }
+      }
+    }
+  }
+}

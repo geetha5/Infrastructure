@@ -1,0 +1,7 @@
+{
+  "EnabledFeatures": [ "cloudwatch_inst_alarm_cleanup" ],
+  "CloudwatchAlarmCleanupSettings": {
+    "Bucket": "wex-mobile-devops-stage",
+    "KeyPrefix": "instance_alarms"
+  }
+}

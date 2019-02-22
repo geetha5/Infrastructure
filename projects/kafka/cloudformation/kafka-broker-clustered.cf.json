@@ -1,0 +1,299 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Kafka Broker - Clustered Instance Stack",
+  "Parameters": {
+    "environment": {
+      "Description": "The environment for the application stack",
+      "Type": "String",
+      "Default": "dev"
+    },
+    "vpcStackName": {
+      "Description": "The stack name for the VPC CF stack",
+      "Type": "String"
+    },
+    "kafkaCommonStackName": {
+      "Description": "The stack name of the kafka common CF stack",
+      "Type": "String"
+    },
+    "asgActionLambdaStackName": {
+      "Description": "The stack name of the Asg Action Lambda",
+      "Type": "String",
+      "Default": "none"
+    },
+    "clusterName": {
+      "Description": "The purpose of this kafka cluster (this is so there can be multiple and test clusters)",
+      "Type": "String",
+      "Default": "kafka"
+    },
+    "enableSsh": {
+      "Type": "String",
+      "Description": "If to enable ssh on instances",
+      "Default": "no",
+      "AllowedValues": [
+        "yes",
+        "no"
+      ]
+    },
+    "instanceAz": {
+      "Description": "The AZ that this instance should go in A,B,or C",
+      "Type": "String",
+      "Default": "A",
+      "AllowedValues": [
+        "A",
+        "B",
+        "C"
+      ]
+    },
+    "devopsBucket": {
+      "Description": "The devops bucket to use",
+      "Type": "String",
+      "Default": "wex-mobile-devops"
+    },
+    "amiId": {
+      "Description": "The id of the ami to use",
+      "Type": "String"
+    },
+    "instanceType": {
+      "Description": "The instance type to use",
+      "Type": "String",
+      "Default": "t3.large"
+    },
+    "instanceKeyPair": {
+      "Description": "The keypair to use for the instance if ssh is enabled",
+      "Type": "String"
+    },
+    "kafkaInfrastructureVersion": {
+      "Description": "The version of the kafka project (template and master playbook to use)",
+      "Type": "String"
+    },
+    "ansibleRoleVersion": {
+      "Description": "The version of the ansible roles to use",
+      "Type": "String"
+    },
+    "sumoAgentVersion": {
+      "Description": "The version of the sumologic agent to use for bootstrapping",
+      "Type": "String",
+      "Default": "19.227-15"
+    },
+    "logVolumeSize": {
+      "Description": "The size in GB for the log volume of the broker",
+      "Type": "Number",
+      "Default": 100
+    },
+    "kafkaBrokerId": {
+      "Description": "The id of the broker for kafka",
+      "Type": "String"
+    },
+    "kafkaBootstrapServer": {
+      "Type": "String",
+      "Description": "If this server is designated as a kafka bootstrap server",
+      "Default": "no",
+      "AllowedValues": [
+        "yes",
+        "no"
+      ]
+    },
+    "dnsName": {
+      "Type": "String",
+      "Description": "The DNS name for the server if it is a designated kafka bootstrap server",
+      "Default": "none"
+    },
+    "deploymentId": {
+      "Description": "THe id of the deploy",
+      "Type": "String"
+    }
+  },
+  "Conditions": {
+    "EnableSsh": { "Fn::Equals": [ { "Ref": "enableSsh" }, "yes" ] },
+    "asgLambdaSubscription": { "Fn::Not": [ { "Fn::Equals": [ { "Ref": "asgActionLambdaStackName" }, "none" ] } ] }
+  },
+  "Mappings": {
+    "AzMap": {
+      "us-east-1": { "A": "us-east-1a", "B": "us-east-1b", "C": "us-east-1c" }
+    }
+  },
+  "Resources": {
+    "LogVolume": {
+      "Type": "AWS::EC2::Volume",
+      "Properties": {
+        "AutoEnableIO": true,
+        "AvailabilityZone": { "Fn::FindInMap": [ "AzMap", { "Ref": "AWS::Region" }, { "Ref": "instanceAz" } ] },
+        "Encrypted": true,
+        "KmsKeyId": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-Ec2KmsKey-Id" } },
+        "Size": { "Ref": "logVolumeSize" },
+        "VolumeType": "gp2",
+        "Tags": [
+          {
+            "Key": "BrokerId",
+            "Value": { "Ref": "kafkaBrokerId" }
+          },
+          {
+            "Key": "KafkaCluster",
+            "Value": { "Ref": "clusterName" }
+          }
+        ]
+      }
+    },
+    "InstanceLc": {
+      "Type": "AWS::AutoScaling::LaunchConfiguration",
+      "Properties": {
+        "IamInstanceProfile": { "Fn::ImportValue": { "Fn::Sub": "${kafkaCommonStackName}-KafkaBrokerIamInstanceProfile-Id" } },
+        "ImageId": { "Ref": "amiId" },
+        "InstanceType": { "Ref": "instanceType" },
+        "SecurityGroups": [
+          { "Fn::ImportValue": { "Fn::Sub": "${kafkaCommonStackName}-KafkaBrokerInstanceSg-Id" } },
+          { "Fn::ImportValue": { "Fn::Sub": "${kafkaCommonStackName}-KafkaIngressSg-Id" } }
+        ],
+        "BlockDeviceMappings": [
+          {
+            "DeviceName": "/dev/xvda",
+            "Ebs": {
+              "DeleteOnTermination": true,
+              "VolumeSize": 30,
+              "VolumeType": "gp2"
+            }
+          }
+        ],
+        "KeyName": { "Fn::If": [ "EnableSsh", { "Ref": "instanceKeyPair" }, { "Ref": "AWS::NoValue" } ] },
+        "UserData": {
+          "Fn::Base64": {
+            "Fn::Join": [
+              "",
+              [
+                "#!/bin/bash\n",
+                "\n",
+                "# initialization variables\n",
+                "_devopsBucket=", { "Ref": "devopsBucket" }, "\n",
+                "_environment=", { "Ref": "environment" }, "\n",
+                "_region=", { "Ref": "AWS::Region" }, "\n",
+                "_kafkaInfrastructureVersion=", { "Ref": "kafkaInfrastructureVersion" }, "\n",
+                "_clusterName=", { "Ref": "clusterName" }, "\n",
+                "_ansibleRoleVersion=", { "Ref": "ansibleRoleVersion" }, "\n",
+                "_sumoAgentVersion=", { "Ref": "sumoAgentVersion" }, "\n",
+                "_stackName=", { "Ref": "AWS::StackName" }, "\n",
+                "_deploymentId=", { "Ref": "deploymentId" }, "\n",
+                "_brokerId=", { "Ref": "kafkaBrokerId" }, "\n",
+                "_logVolumeId=", { "Ref": "LogVolume" }, "\n",
+                "_bootstrapServer=", { "Ref": "kafkaBootstrapServer" }, "\n",
+                "_dnsName=", { "Ref": "dnsName" }, "\n",
+                "\n",
+                "# pull ansible scripts\n",
+                "mkdir /root/ansible_scripts\n",
+                "aws s3 cp s3://${_devopsBucket}/ansible/${_ansibleRoleVersion}/scripts /root/ansible_scripts ",
+                "--recursive --region ${_region}\n",
+                "chmod -R 700 /root/ansible_scripts\n",
+                "\n",
+                "# run bootstrap_logs\n",
+                "_sumoS3RpmUrl=\"s3://${_devopsBucket}/installers/sumologic/SumoCollector-${_sumoAgentVersion}.x86_64.rpm\"\n",
+                "chmod 700 /root/ansible_scripts/bootstrap_logs.sh && /root/ansible_scripts/bootstrap_logs.sh \n",
+                "sumo ${_environment} broker-${_clusterName} mobile ${_sumoS3RpmUrl}\n",
+                "\n",
+                "# pull ansible role archive\n",
+                "aws s3 cp s3://${_devopsBucket}/ansible/${_ansibleRoleVersion}/ansible_roles.zip /root/ansible_roles.zip ",
+                "--region ${_region}\n",
+                "\n",
+                "# run bootstrap\n",
+                "chmod 700 /root/ansible_scripts/bootstrap.sh && /root/ansible_scripts/bootstrap.sh | while IFS= ",
+                "read -r line; do echo \"$(date '+%Y-%m-%d %H:%M:%S') $line\"; done |& tee -a /var/log/bootstrap.log\n",
+                "\n",
+                "# deploy ansible roles\n",
+                "chmod 700 /root/ansible_scripts/deploy_roles.sh && /root/ansible_scripts/deploy_roles.sh ",
+                "/root/ansible_roles.zip | while IFS= read -r line; do echo \"$(date '+%Y-%m-%d %H:%M:%S') $line\"; ",
+                "done |& tee -a /var/log/bootstrap.log\n",
+                "\n",
+                "# pull playbooks\n",
+                "aws s3 cp s3://${_devopsBucket}/projects/kafka/${_kafkaInfrastructureVersion}/ansible/playbooks/broker/ ",
+                "/etc/ansible/ --recursive --region ${_region}\n",
+                "\n",
+                "# pull variable file\n",
+                "aws s3 cp s3://${_devopsBucket}/variables/${_environment}/ansible/kafka/${_clusterName}/broker.yml ",
+                "/etc/ansible/variables.yml --region ${_region}\n",
+                "\n",
+                "# run playbooks\n",
+                "KAFKA_BROKER_ID=${_brokerId} KAFKA_VOLUME_ID=${_logVolumeId} BOOTSTRAP_SERVER=${_bootstrapServer} ",
+                "DNS_NAME=${_dnsName} CLUSTER_NAME=${_clusterName} /usr/local/bin/ansible-playbook /etc/ansible/provision_playbook.yml\n",
+                "\n",
+                "# send cfn resource signal\n",
+                "python /root/ansible_scripts/aws/kafka_cfn_wait.py --environment ${_environment} --stack-name ${_stackName} ",
+                "--resource-id InstanceAsg \n"
+              ]
+            ]
+          }
+        }
+      }
+    },
+    "AsgNotificationSnsTopic": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "DisplayName": { "Fn::Join": [ "-", [ { "Ref": "AWS::StackName" }, "Asg-Sns" ] ] },
+        "Subscription": [
+          {
+            "Endpoint": { "Fn::ImportValue": { "Fn::Sub": "${asgActionLambdaStackName}-LambdaFunction-Arn" } },
+            "Protocol": "lambda"
+          }
+        ]
+      },
+      "Condition": "asgLambdaSubscription"
+    },
+    "AsgActionLambdaPermission": {
+      "Type": "AWS::Lambda::Permission",
+      "Properties": {
+        "Action": "lambda:InvokeFunction",
+        "Principal": "sns.amazonaws.com",
+        "SourceArn": { "Ref": "AsgNotificationSnsTopic" },
+        "FunctionName": { "Fn::ImportValue": { "Fn::Sub": "${asgActionLambdaStackName}-LambdaFunction-Arn" } }
+      },
+      "Condition": "asgLambdaSubscription"
+    },
+    "InstanceAsg": {
+      "Type": "AWS::AutoScaling::AutoScalingGroup",
+       "Properties": {
+         "Cooldown": 300,
+         "DesiredCapacity": 1,
+         "MaxSize": 2,
+         "MinSize": 0,
+         "HealthCheckGracePeriod": 500,
+         "HealthCheckType": "EC2",
+         "LaunchConfigurationName": { "Ref": "InstanceLc" },
+         "VPCZoneIdentifier": [
+           { "Fn::ImportValue": { "Fn::Join": [ "", [ { "Fn::Sub": "${vpcStackName}" }, "-PrivateSubnet",
+             { "Ref": "instanceAz" }, "-Id" ] ] } }
+         ],
+         "Tags": [
+           {
+             "Key": "!RuntimeASG",
+             "Value": "off=(n/a)",
+             "PropagateAtLaunch": false
+           }
+         ],
+         "NotificationConfigurations": [
+           {
+             "Fn::If": [ "asgLambdaSubscription",
+               {
+                 "NotificationTypes": [
+                   "autoscaling:EC2_INSTANCE_LAUNCH", "autoscaling:EC2_INSTANCE_LAUNCH_ERROR",
+                   "autoscaling:EC2_INSTANCE_TERMINATE", "autoscaling:EC2_INSTANCE_TERMINATE_ERROR"
+                 ],
+                 "TopicARN": { "Ref": "AsgNotificationSnsTopic" }
+               },
+               { "Ref": "AWS::NoValue" }
+             ]
+           }
+         ]
+       },
+      "CreationPolicy": {
+        "ResourceSignal": {
+          "Count": 1,
+          "Timeout": "PT15M"
+        }
+      },
+      "UpdatePolicy": {
+        "AutoScalingRollingUpdate": {
+          "MaxBatchSize": 1,
+          "PauseTime": "PT15M",
+          "WaitOnResourceSignals": true
+        }
+      }
+    }
+  }
+}

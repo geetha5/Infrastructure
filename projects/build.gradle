@@ -1,0 +1,437 @@
+import com.amazonaws.auth.AWSStaticCredentialsProvider
+import com.amazonaws.services.cloudformation.*
+import com.amazonaws.services.cloudformation.model.*
+import org.yaml.snakeyaml.*
+import groovy.json.*
+
+buildscript {
+    ext {
+        snakeYamlVersion = '1.17'
+        awsVersion = '1.11.209'
+    }
+    repositories {
+        jcenter()
+        mavenCentral()
+    }
+
+    dependencies {
+        classpath "org.yaml:snakeyaml:${snakeYamlVersion}"
+        classpath "com.amazonaws:aws-java-sdk-cloudformation:${awsVersion}"
+    }
+}
+
+ext {
+    // default project name
+    projectName = loadStringProp("projectName", "core-cf")
+    // project version
+    projectVersion = getProjectVersion(projectName)
+    // S3 properties
+    s3Bucket = loadStringProp("s3Bucket", "wex-mwd-devops-dev")
+    s3Region = loadStringProp("s3Region", "us-east-1")
+    s3KeyBase = loadStringProp("s3KeyBase", "projects" )
+    s3KeyBaseWithProject = "${s3KeyBase}/${projectName}"
+    // The build to promote
+    buildToPromote = loadStringProp("buildToPromote", "latest")
+    // The version to promote too
+    promotedVersion = loadStringProp("promotedVersion", "0.0.1")
+    // skip playbook validation
+    skipPlaybookValidation = loadBooleanProp("skipPlaybookValidation", false)
+    // skip cloudformation validation
+    skipCfValidation = loadBooleanProp("skipCfValidation", false)
+    // skip all validation
+    skipAllValidation = loadBooleanProp("skipAllValidation", false)
+    // environment to deploy
+    deployEnvironment = loadStringProp("deployEnvironment", "dev")
+}
+
+// Common Tasks //
+task clean(type:Task) {
+    description = "Cleans build, temp, and deploy directories"
+    group = "Common"
+
+    doLast {
+        new File(projectDir, "${projectName}/build").deleteDir()
+        new File(projectDir, "${projectName}/temp").deleteDir()
+        new File(projectDir, "${projectName}/deploy").deleteDir()
+    }
+}
+
+// Build Tasks //
+task createBuildDir(type:Task) {
+    description = "Creates the build directory"
+    group = "Build"
+
+    doLast {
+        new File(projectDir, "${projectName}/build").mkdir()
+    }
+}
+
+task cleanBuildDir(type:Task) {
+    description = "Cleans the build directory"
+    group = "Build"
+
+    doLast {
+        new File(projectDir, "${projectName}/build").deleteDir()
+    }
+}
+
+task validatePlaybooks(type:Task) {
+    description = "Validate ansible playbooks"
+    group = "Build"
+
+    doLast {
+        if (!skipPlaybookValidation && !skipAllValidation) {
+            logger.lifecycle("Validating Ansible Playbooks:")
+            boolean playbookValid = validateYaml(new File(projectDir, "${projectName}"))
+
+            if (!playbookValid) {
+                throw new GradleException('Playbook Validation Failed')
+            }
+        }
+        else {
+            logger.lifecycle("Skipping Ansible Playbook Validation")
+        }
+    }
+}
+
+task validateCloudformation(type:Task) {
+    description = "Validate cloudformation templates"
+    group = "Build"
+
+    doLast {
+        if (!skipCfValidation && !skipAllValidation) {
+            logger.lifecycle("Validating CloudFormation Templates:")
+            boolean cfValid = validateCf(new File(projectDir, "${projectName}"))
+
+            if (!cfValid) {
+                throw new GradleException('CloudFormation Validation Failed')
+            }
+        }
+        else {
+            logger.lifecycle("Skipping Cloudformation Validation")
+        }
+    }
+}
+
+task build(type:Task) {
+    description = "Build the project"
+    group = "Build"
+
+    dependsOn 'cleanBuildDir'
+    dependsOn 'createBuildDir'
+    dependsOn 'validatePlaybooks'
+    dependsOn 'validateCloudformation'
+
+    doLast {
+        // Get the current timestamp (UTC) and create the base s3Key fro the build
+        String buildTimestamp = new Date().format("yyyyMMdd-HHmmss", TimeZone.getTimeZone("UTC"))
+
+        logger.lifecycle("making build ${projectVersion}_${buildTimestamp} for project ${projectName}")
+
+        String buildS3Key = "${s3KeyBaseWithProject}/dev/${projectVersion}_${buildTimestamp}"
+        String latestS3Key = "${s3KeyBaseWithProject}/dev/latest.txt"
+        File latestFile = new File(projectDir, "${projectName}/build/latest.txt")
+        File metadataFile = new File(projectDir, "${projectName}/build/metadata.json")
+
+        // Write and upload latest tag file
+        latestFile << "${projectVersion}_${buildTimestamp}"
+        uploadToS3(s3Bucket, latestS3Key, "projects/${projectName}/build/latest.txt", false)
+
+        new File(projectDir, "${projectName}/build").eachFile() { file ->
+            if (file.name.endsWith(".zip")) {
+                uploadToS3(s3Bucket, "${buildS3Key}/cf_resources/${file.name}", file.path, false)
+            }
+        }
+
+        // Upload project directory skipping build and temp directories
+        new File(projectDir, "${projectName}").eachFile() { file ->
+            if (file.name != "build" && file.name != "temp") {
+                if (file.isDirectory()) {
+                    uploadToS3(s3Bucket, "${buildS3Key}/${file.name}", file.path, true)
+                }
+                else {
+                    uploadToS3(s3Bucket, "${buildS3Key}/${file.name}", file.path, false)
+                }
+            }
+        }
+
+        // Create and upload metadata file
+        String json = JsonOutput.toJson([gitHash: gitHash, gitBranch: gitBranch])
+        metadataFile << json
+        uploadToS3(s3Bucket, "${buildS3Key}/metadata.json", metadataFile.path, false)
+
+        logger.lifecycle("Created build s3://${s3Bucket}/${s3KeyBaseWithProject}/dev/${projectVersion}_${buildTimestamp}")
+    }
+}
+
+if (new File(projectDir, "${projectName}/cf_resources").isDirectory()) {
+    new File(projectDir, "${projectName}/cf_resources").eachDir() { dir ->
+        task "package${dir.name}"(type: Zip) {
+            group = "Build"
+            from "${dir.path}/lambda"
+            include '*.*'
+            destinationDir new File(projectDir, "${projectName}/build/")
+            archiveName "${dir.name}_lambda.zip"
+        }
+        build.dependsOn "package${dir.name}"
+    }
+}
+
+// Promote Tasks //
+task createTempDir(type:Task) {
+    description = "Creates the temp directory"
+    group = "Promote"
+
+    doLast {
+        new File(projectDir, "${projectName}/temp").mkdir()
+    }
+}
+
+task cleanTempDir(type:Task) {
+    description = "Cleans the temp directory"
+    group = "Promote"
+
+    doLast {
+        new File(projectDir, "${projectName}/temp").deleteDir()
+    }
+}
+
+task promoteBuild(type:Task) {
+    description = "Promote a build to a version"
+    group = "Promote"
+
+    dependsOn 'cleanTempDir'
+    dependsOn 'createTempDir'
+
+    doLast {
+        String buildNumberToPromote
+
+        if (buildToPromote == "latest") {
+            buildNumberToPromote = getLatestBuild("${s3KeyBaseWithProject}/dev/latest.txt", "projects/${projectName}/temp")
+
+            if (!checkForS3Object(s3Bucket, "${s3KeyBaseWithProject}/dev/${buildNumberToPromote}/metadata.json")) {
+                throw new GradleException("Build to promote ${buildNumberToPromote} doesn't exist")
+            }
+
+            (promotedVersion) = buildNumberToPromote.tokenize('_')
+            String nextVersion = bumpVersion(promotedVersion)
+            File versionFile = new File(projectDir, "${projectName}/version.txt")
+            versionFile.delete()
+            versionFile << "${nextVersion}"
+
+            logger.lifecycle("promoting latest build: ${buildNumberToPromote}, next version: ${nextVersion}")
+        } else {
+            buildNumberToPromote = buildToPromote
+            if (!checkForS3Object(s3Bucket, "${s3KeyBaseWithProject}/dev/${buildNumberToPromote}/metadata.json")) {
+                throw new GradleException("Build to promote ${buildNumberToPromote} doesn't exist")
+            }
+        }
+
+        if (checkForS3Object(s3Bucket, "${s3KeyBaseWithProject}/releases/${promotedVersion}/metadata.json")) {
+            throw new GradleException("Version: ${promotedVersion} already exists")
+        }
+
+        logger.lifecycle("promoting build ${buildNumberToPromote} to version ${promotedVersion}")
+
+        String sourceS3Key = "${s3KeyBaseWithProject}/dev/${buildNumberToPromote}"
+        String latestS3Key = "${s3KeyBaseWithProject}/releases/latest.txt"
+        String tempLocation = "projects/${projectName}/temp/${buildNumberToPromote}"
+        String uploadTemp = "projects/${projectName}/temp/${buildNumberToPromote}/${s3KeyBaseWithProject}/dev/${buildNumberToPromote}"
+        String destS3Key = "${s3KeyBaseWithProject}/releases/${promotedVersion}"
+        downloadFromS3(s3Bucket, sourceS3Key, tempLocation, true)
+        uploadToS3(s3Bucket, destS3Key, uploadTemp, true)
+
+        File latestFile = new File(projectDir, "${projectName}/build/latest.txt")
+        File metadataFile = new File(projectDir, "${projectName}/build/metadata.json")
+
+        // Write and upload latest tag file
+        latestFile << "${promotedVersion}"
+        uploadToS3(s3Bucket, latestS3Key, latestFile.path, false)
+
+        logger.lifecycle("promoted build s3://${s3Bucket}/${s3KeyBaseWithProject}/releases/${promotedVersion}")
+    }
+}
+
+// Deploy Tasks //
+task createDeployDir(type:Task) {
+    description = "Creates the deploy directory"
+    group = "Deploy"
+
+    doLast {
+        new File("projects/${projectName}/deploy").mkdir()
+    }
+}
+
+task cleanDeployDir(type:Task) {
+    description = "Cleans the deploy directory"
+    group = "Deploy"
+
+    doLast {
+        new File("projects/${projectName}/deploy").deleteDir()
+    }
+}
+
+task deployStacks(type:Task) {
+    description = "Deploys or updates cloudformation stack(s)"
+    group = "Deploy"
+
+    dependsOn 'cleanDeployDir'
+    dependsOn 'createDeployDir'
+
+    doLast {
+
+    }
+}
+
+task destroyStacks(type:Task) {
+    description = "Destroys cloudformation stack(s)"
+    group = "Deploy"
+
+    dependsOn 'cleanDeployDir'
+    dependsOn 'createDeployDir'
+
+    doLast {
+
+    }
+}
+
+// Functions //
+/**
+ * This will return a list of the parameters that are required by the template
+ * @param templateFile the path of the template file
+ * @return the list of required parameters
+ */
+List<String> getCfRequiredParams(String templateFile) {
+    List<String> requiredParams = new ArrayList<String>()
+    Object json = new JsonSlurper().parseText(new File(templateFile)).text
+
+    for (param in json.Parameters) {
+        if (!json.Parameters[param.key].keySet().contains("Default")){
+            requiredParams.add(param.key)
+        }
+    }
+
+    return requiredParams
+}
+
+/**
+ * This will return a list of the parameters that are optional by the template
+ * @param templateFile the path of the template file
+ * @return the list of optional parameters
+ */
+List<String> getCfOptionalParams(String templateFile) {
+    List<String> optionalParams = new ArrayList<String>()
+    Object json = new JsonSlurper().parseText(new File(templateFile)).text
+
+    for (param in json.Parameters) {
+        if (json.Parameters[param.key].keySet().contains("Default")){
+            optionalParams.add(param.key)
+        }
+    }
+
+    return optionalParams
+}
+
+/**
+ * This will get the version of the project from the
+ * version.txt file in the project directory
+ * @param projectName the name of the project
+ * @return the version of the project
+ */
+String getProjectVersion(String projectName) {
+    String version = new File(projectDir, "${projectName}/version.txt").text.trim()
+    return version
+}
+
+/**
+ * expects sem version formatting
+ * @param version
+ * @return string with lowest proved version incremented
+ */
+static String bumpVersion(String version) {
+    def (major, minor, patch) = version.tokenize('.')
+
+    if (patch != null) {
+        patch = (patch as Integer) + 1
+        return "${major}.${minor}.${patch}"
+    } else if (minor != null) {
+        minor = (minor as Integer) + 1
+        return "${major}.${minor}"
+    } else {
+        major = (major as Integer) + 1
+        return "${major}"
+    }
+}
+
+/**
+ * This will validate all the yaml files in a directory path
+ * @param baseDir the basedir to look for yaml files
+ * @return a boolean if the yaml files are all valid
+ */
+boolean validateYaml(File baseDir) {
+
+    Yaml yaml = new Yaml()
+    boolean yamlValid = true
+
+    new File(baseDir.absolutePath).eachFileRecurse() { file ->
+        if (file.name.endsWith('.yaml') || file.name.endsWith('.yml')) {
+            try {
+                yaml.load(new FileInputStream(file))
+                logger.lifecycle("${file} --> valid")
+            }
+            catch (Exception e) {
+                logger.lifecycle("${file} --> Not valid yaml")
+                yamlValid = false
+            }
+        }
+    }
+    return yamlValid
+}
+
+/**
+ * This will validate all the cloudformation files in a directory
+ * files will need the extention .cf.json or .template
+ * @param baseDir the basedir to look for cf files
+ * @return a boolean if the cf files are all valid
+ */
+boolean validateCf(File baseDir) {
+
+    boolean cfValid = true
+    AmazonCloudFormationClient cfClient = getCfClient('us-east-1')
+
+    new File(baseDir.absolutePath).eachFileRecurse() { file ->
+        if (file.name.endsWith('.cf.json') || file.name.endsWith('.template')) {
+            try {
+                ValidateTemplateRequest templateRequest = new ValidateTemplateRequest().withTemplateBody(file.text)
+                ValidateTemplateResult result = cfClient.validateTemplate(templateRequest)
+                logger.lifecycle("${file} --> valid")
+            }
+            catch (Exception e) {
+                logger.lifecycle("${file} --> Not valid")
+                logger.lifecycle("${e}")
+                cfValid = false
+            }
+        }
+    }
+
+    return cfValid
+}
+
+/**
+ * This will return a cloudformation client
+ * @param awsCredentials The aws credentials to use to create the client
+ * @param region the region to use to create the client
+ * @return the cloudformation client
+ */
+AmazonCloudFormationClient getCfClient(String region) {
+
+    AmazonCloudFormationClient cfClient = AmazonCloudFormationClientBuilder.standard()
+                                    .withCredentials(new AWSStaticCredentialsProvider(awsCredentials))
+                                    .withRegion(region)
+                                    .build()
+
+    return cfClient
+}
+
+
+

@@ -1,0 +1,144 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Card Benefits UI Stack",
+
+  "Parameters": {
+    "accountStackName":{
+      "Type": "String",
+      "Description": "account stack name"
+    },
+    "platformStackName": {
+      "Type": "String",
+      "Description": "parent stack name"
+    },
+    "platformInstanceStackName": {
+      "Type": "String",
+      "Description": "instance stack name"
+    },
+    "envType": {
+      "Type": "String",
+      "Description": "designated environment type",
+      "Default": "dev",
+      "AllowedValues": ["dev", "stage", "prod"]
+    },
+    "instance": {
+      "Type": "String",
+      "Description": "unique short name for this Platform Instance, e.g. sit, dit",
+      "MinLength": 3,
+      "MaxLength": 10,
+      "AllowedPattern": "^[a-z][a-z0-9\\-]*$",
+      "ConstraintDescription": "Must start with a letter, only contain lower-case letters, '-', and/or numbers"
+    },
+    "applicationName":{
+      "Type": "String",
+      "Description": "Application Name"
+    },
+    "applicationBuildId":{
+      "Type": "String",
+      "Description": "Path within S3 Bucket to the code being deployed"
+    }
+  },
+
+  "Resources": {
+    "S3BucketForWebsiteContent": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketName": {"Fn::Sub": "card-benefits-ui-${instance}-${envType}"},
+        "AccessControl": "Private",
+        "LoggingConfiguration": {
+          "DestinationBucketName": {"Fn::ImportValue": {"Fn::Sub": "${accountStackName}-S3AppLoggingBucket-Name"}},
+          "LogFilePrefix": {"Ref": "applicationName"}
+        },
+        "VersioningConfiguration": {"Status": "Enabled"}
+      }
+    },
+
+    "OriginAccessIdentity": {
+      "Type": "AWS::CloudFront::CloudFrontOriginAccessIdentity",
+      "Properties": {
+        "CloudFrontOriginAccessIdentityConfig": {
+          "Comment": {"Fn::Sub": ["${prefix}-oai", {"prefix":  {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-resource-prefix"}}}]}
+        }
+      }
+    },
+
+    "S3BucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {"Ref": "S3BucketForWebsiteContent"},
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Id": "PolicyForCloudFrontPrivateContent",
+          "Statement": [{
+            "Sid": " Grant a CloudFront Origin Identity access to support private content",
+            "Effect": "Allow",
+            "Principal": {"CanonicalUser": {"Fn::GetAtt": ["OriginAccessIdentity", "S3CanonicalUserId"]}},
+            "Action": "s3:GetObject",
+            "Resource": {"Fn::Sub": "arn:aws:s3:::${S3BucketForWebsiteContent}/*"}
+          }]
+        }
+      },
+      "DependsOn": ["S3BucketForWebsiteContent", "OriginAccessIdentity"]
+    },
+
+    "WebsiteCDN": {
+      "Type": "AWS::CloudFront::Distribution",
+      "Properties": {
+        "DistributionConfig": {
+          "Comment": "CDN for S3-backed static website",
+          "Aliases": [{"Fn::Sub": ["wex.${domain}", {"domain": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-HostedZoneExternal-Domain"}}}]}],
+          "Enabled": "true",
+          "HttpVersion": "http2",
+          "PriceClass": "PriceClass_100",
+          "DefaultCacheBehavior": {
+            "AllowedMethods": ["GET", "HEAD"],
+            "Compress": true,
+            "ViewerProtocolPolicy": "redirect-to-https",
+            "TargetOriginId": "s3-origin",
+            "ForwardedValues": {
+              "QueryString": "true",
+              "Cookies": {"Forward": "none"}
+            }
+          },
+          "ViewerCertificate": {
+            "AcmCertificateArn": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-HttpsCertExternal"}},
+            "MinimumProtocolVersion": "TLSv1.2_2018",
+            "SslSupportMethod": "sni-only"
+          },
+          "DefaultRootObject": "index.html",
+          "Origins": [{
+            "Id": "s3-origin",
+            "DomainName": {"Fn::GetAtt": ["S3BucketForWebsiteContent", "DomainName"]},
+            "OriginPath": {"Fn::Sub": "/${applicationBuildId}"},
+            "S3OriginConfig": {
+              "OriginAccessIdentity": {"Fn::Sub":  "origin-access-identity/cloudfront/${OriginAccessIdentity}"}
+            }
+          }]
+        }
+      }
+    },
+
+    "WebsiteDNSName": {
+      "Type": "AWS::Route53::RecordSet",
+      "Properties": {
+        "Type": "CNAME",
+        "Comment": "CNAME redirect to CloudFront distribution",
+        "HostedZoneId": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-HostedZoneExternal-Id"}},
+        "ResourceRecords": [{"Fn::GetAtt": ["WebsiteCDN", "DomainName"]}],
+        "Name": {"Fn::Sub": ["wex.${domain}", {"domain": {"Fn::ImportValue": {"Fn::Sub": "${platformInstanceStackName}-HostedZoneExternal-Domain"}}}]},
+        "TTL": "300"
+      }
+    }
+  },
+
+  "Outputs": {
+    "WebsiteURL": {
+      "Value": {"Fn::Sub": "https://${WebsiteDNSName}"},
+      "Description": "The URL of the newly created website"
+    },
+    "BucketName": {
+      "Value": {"Ref": "S3BucketForWebsiteContent"},
+      "Description": "Name of S3 bucket to hold website content"
+    }
+  }
+}

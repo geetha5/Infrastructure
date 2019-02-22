@@ -1,0 +1,256 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Common Iam Policies",
+  "Parameters": {
+    "environment": {
+      "Description": "The environment for the policies",
+      "Type": "String",
+      "Default": "dev"
+    },
+    "vpcStackName": {
+      "Description": "The stack name for the vpc stack for imports",
+      "Type": "String"
+    },
+    "devopsBucketName": {
+      "Description": "The name of the devops bucket",
+      "Type": "String"
+    }
+  },
+  "Conditions": {
+    "dev-dit": { "Fn::Equals": [ { "Ref": "environment" }, "dev" ] },
+    "not-dev-dit": { "Fn::Not": [ { "Fn::Equals": [ { "Ref": "environment" }, "dev" ] } ] }
+  },
+  "Resources": {
+    "ListAllBucketsPolicy": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "Description": "Policy for listing all buckets",
+        "Path": "/",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "s3:GetBucketLocation",
+                "s3:ListAllMyBuckets"
+              ],
+              "Resource": "arn:aws:s3:::*"
+            }
+          ]
+        }
+      }
+    },
+    "ParamStoreGeneralAccess": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "Description": "Policy for general parameter store access",
+        "Path": "/",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": "kms:Decrypt",
+              "Resource": { "Fn::ImportValue": { "Fn::Sub": "${vpcStackName}-ParameterStoreKmsKey-Arn" } }
+            },
+            {
+              "Effect": "Allow",
+              "Action": "ssm:DescribeParameters",
+              "Resource": "*"
+            }
+          ]
+        }
+      }
+    },
+    "TrendMicroAccessPolicy": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "Description": "Policy for accessing trendmicro related configuration",
+        "Path": "/",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "s3:List*",
+                "s3:Get*"
+              ],
+              "Resource": [
+                { "Fn::Join": [ "", [ "arn:aws:s3:::", "trendmicro-agents-", { "Ref": "AWS::Region" } ] ] },
+                { "Fn::Join": [ "", [ "arn:aws:s3:::", "trendmicro-agents-", { "Ref": "AWS::Region" }, "/*" ] ] }
+              ]
+            },
+            {
+              "Effect": "Allow",
+              "Action": "ssm:GetParameter",
+              "Resource": [
+                { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".trendmicro.tenant-id" ] ] },
+                { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".trendmicro.token" ] ] }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "SumologicAccessPolicy": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "Description": "Policy for accessing sumologic secrets",
+        "Path": "/",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": "ssm:GetParameter",
+              "Resource": [
+                { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".sumologic.accessid" ] ] },
+                { "Fn::Join": [ "", [ "arn:aws:ssm:", { "Ref": "AWS::Region" }, ":", { "Ref": "AWS::AccountId" }, ":parameter/", { "Ref": "environment" }, ".sumologic.accesskey" ] ] }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "DevopsBucketAccessPolicy": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "Description": "Policy for accessing devops bucket limiting for environment",
+        "Path": "/",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": "s3:List*",
+              "Resource": [
+                { "Fn::Join": [ "", [ "arn:aws:s3:::*", { "Ref": "devopsBucketName" } ] ] },
+                { "Fn::Join": [ "", [ "arn:aws:s3:::*", { "Ref": "devopsBucketName" }, "/*" ] ] }
+              ]
+            },
+            {
+              "Effect": "Allow",
+              "Action": "s3:Get*",
+              "Resource": [
+                { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "devopsBucketName" }, "/ansible/*" ] ] },
+                { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "devopsBucketName" }, "/ansible_modules/*" ] ] },
+                { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "devopsBucketName" }, "/installers/*" ] ] },
+                { "Fn::If": [ "dev-dit", { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "devopsBucketName" }, "/variables/dev/*" ] ] }, { "Ref": "AWS::NoValue" } ] },
+                { "Fn::If": [ "dev-dit", { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "devopsBucketName" }, "/variables/dit/*" ] ] }, { "Ref": "AWS::NoValue" } ] },
+                { "Fn::If": [ "not-dev-dit", { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "devopsBucketName" }, "/variables/", { "Ref": "environment" }, "/*"  ] ] }, { "Ref": "AWS::NoValue" } ] },
+                { "Fn::If": [ "dev-dit", { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "devopsBucketName" }, "/config/dev/*" ] ] }, { "Ref": "AWS::NoValue" } ] },
+                { "Fn::If": [ "dev-dit", { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "devopsBucketName" }, "/config/dit/*" ] ] }, { "Ref": "AWS::NoValue" } ] },
+                { "Fn::If": [ "not-dev-dit", { "Fn::Join": [ "", [ "arn:aws:s3:::", { "Ref": "devopsBucketName" }, "/config/", { "Ref": "environment" }, "/*"  ] ] }, { "Ref": "AWS::NoValue" } ] }
+
+              ]
+            }
+          ]
+        }
+      }
+    },
+    "CloudFormationInstancePolicy": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "Description": "Policy for Ec2 Instance self tagging",
+        "Path": "/",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "ec2:CreateTags",
+                "ec2:DeleteTags",
+                "ec2:DescribeTags",
+                "ec2:DescribeInstances"
+              ],
+              "Resource": "*"
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "autoscaling:Describe*",
+                "cloudwatch:Describe*",
+                "cloudwatch:List*",
+                "cloudwatch:PutMetricAlarm*",
+                "cloudwatch:PutMetricData",
+                "cloudwatch:DeleteAlarms",
+                "cloudwatch:Get*"
+              ],
+              "Resource": "*"
+            }
+          ]
+        }
+      }
+    },
+    "InstanceAlarmCleanupPolicy": {
+      "Type": "AWS::IAM::ManagedPolicy",
+      "Properties": {
+        "Description": "Policy for Ec2 Instance Alarm Cleanup",
+        "Path": "/",
+        "PolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "s3:GetObject",
+                "s3:DeleteObject",
+                "s3:List*"
+              ],
+              "Resource": [
+                { "Fn::Join": [ "", [ "" ] ] }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "OutputListAllBucketsMP": {
+      "Description": "The policy to list all s3 buckets",
+      "Value": { "Ref": "ListAllBucketsPolicy" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ListAllBucketsMP-Arn" }
+      }
+    },
+    "OutputParamStoreAccessMP": {
+      "Description": "The policy to get general access to the param store key",
+      "Value": { "Ref": "ParamStoreGeneralAccess" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ParamStoreGenAccessMP-Arn" }
+      }
+    },
+    "OutputTrendMicroMP": {
+      "Description": "The policy to get access to trend micro params and agents",
+      "Value": { "Ref": "TrendMicroAccessPolicy" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-TrendMicroMP-Arn" }
+      }
+    },
+    "OutputSumoLogicMP": {
+      "Description": "The policy to get access to SumoLogic params",
+      "Value": { "Ref": "SumologicAccessPolicy" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-SumoLogicMP-Arn" }
+      }
+    },
+    "OutputDevOpsBucketMP": {
+      "Description": "The policy to get access to the devops bucket and appropriate environment configs",
+      "Value": { "Ref": "DevopsBucketAccessPolicy" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-DevOpsBucketMP-Arn" }
+      }
+    },
+    "OutputCFInstanceMP": {
+      "Description": "The Policy for general cloudfromation instance permissions",
+      "Value": { "Ref": "CloudFormationInstancePolicy" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-CloudFormationInstanceMP-Arn" }
+      }
+    }
+  }
+}

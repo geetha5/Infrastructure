@@ -1,0 +1,32 @@
+---
+
+- name: driver service provision master playbook
+  hosts: localhost
+  become: yes
+  become_user: root
+  vars_files:
+    - /etc/ansible/variables.yml
+
+  roles:
+    - base
+    - chrony
+    - sumologic
+    - jdk
+    - nexus_artifact
+    - dynamic_spring_properties
+    - splunk
+    - trendmicro
+
+  post_tasks:
+    - name: Generate System Report
+      shell: ansible_scripts/ec2/system_report.sh
+      args:
+        chdir: /root
+      register: system_report
+
+    - name: export system report
+      aws_s3:
+        bucket: "{{devops_bucket}}"
+        object: "system-reports/{{host_environment}}/{{system_report.stdout}}"
+        src: "/root/{{system_report.stdout}}"
+        mode: put

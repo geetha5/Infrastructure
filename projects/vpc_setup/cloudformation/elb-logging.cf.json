@@ -1,0 +1,159 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "ELB Logging Common Setup",
+  "Parameters": {
+    "environment": {
+      "Description": "The environment ELBs that will log to using these common elements",
+      "Type": "String"
+    },
+    "group": {
+      "Description": "The group that owns the ELBs (this is mostly for naming)",
+      "Type": "String"
+    },
+    "testStack": {
+      "Description": "This will set if the stack is only for testing which will change to random names",
+      "Type": "String",
+      "Default": "no",
+      "AllowedValues": [
+        "yes",
+        "no"
+      ]
+    },
+    "logExpiration": {
+      "Description": "This is what the log expiration for the bucket is (in days)",
+      "Type": "String",
+      "Default": "365"
+    }
+  },
+  "Conditions": {
+    "enableTesting": { "Fn::Equals": [ { "Ref": "testStack" }, "yes" ] }
+  },
+  "Mappings": {
+    "regionMap": {
+      "us-east-1": { "ElbAccountId": "127311923021" },
+      "us-east-2": { "ElbAccountId": "033677994240" },
+      "us-west-1": { "ElbAccountId": "027434742980" },
+      "us-west-2": { "ElbAccountId": "797873946194" },
+      "ca-central-1": { "ElbAccountId": "985666609251" },
+      "eu-central-1": { "ElbAccountId": "054676820928" },
+      "eu-west-1": { "ElbAccountId": "156460612806" },
+      "eu-west-2": { "ElbAccountId": "652711504416" },
+      "eu-west-3": { "ElbAccountId": "009996457667" },
+      "ap-northeast-1": {"ElbAccountId": "582318560864" },
+      "ap-northeast-2": { "ElbAccountId": "600734575887" },
+      "ap-northeast-3": { "ElbAccountId": "383597477331" },
+      "ap-southeast-1": { "ElbAccountId": "114774131450" },
+      "ap-southeast-2": { "ElbAccountId": "783225319266" },
+      "ap-south-2": { "ElbAccountId": "718504428378" },
+      "sa-east-2": { "ElbAccountId": "507241528517" }
+    }
+  },
+  "Resources": {
+    "ElbLogKmsKey": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "Description": { "Fn::Join": [ " ", [ { "Ref": "group" }, { "Ref": "environment" }, "ELB Log Bucket Kms Key" ] ] },
+        "Enabled": true,
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Id": { "Fn::Join": [ "-", [ { "Ref": "group" }, { "Ref": "environment" }, "elb-logs" ] ] },
+          "Statement": [
+            {
+              "Sid": "Enable IAM User Permissions",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": { "Fn::Join": [ "", [ "arn:aws:iam::", { "Ref": "AWS::AccountId" }, ":root" ] ] } },
+              "Action": "kms:*",
+              "Resource": "*"
+            }
+          ]
+        }
+      }
+    },
+    "ElbLogKmsKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": { "Fn::Join": [  "-", [ "alias/", { "Ref": "group" }, { "Ref": "environment" }, "-elb-log-key" ] ] },
+        "TargetKeyId": { "Ref": "ElbLogKmsKey" }
+      }
+    },
+    "ElbLogBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketName": { "Fn::If": [ "enableTesting", { "Ref": "AWS::NoValue" }, { "Fn::Join": [ "-", [
+         "wex", { "Ref": "group" }, { "Ref": "environment" }, { "Ref": "AWS::Region" }, "elb-logs" ] ] } ] },
+        "BucketEncryption": {
+          "ServerSideEncryptionConfiguration": [
+            {
+              "ServerSideEncryptionByDefault": {
+                "KMSMasterKeyID": { "Ref": "ElbLogKmsKey" },
+                "SSEAlgorithm": "aws:kms"
+              }
+            }
+          ]
+        },
+        "LifecycleConfiguration": {
+          "Rules": [
+            {
+              "Id": { "Fn::Join": [ "-", [ "log-expire", { "Ref": "logExpiration" }, "days" ] ] },
+              "ExpirationInDays": { "Ref": "logExpiration" },
+              "Prefix": "/",
+              "Status": "Enabled"
+            }
+          ]
+        }
+      }
+    },
+    "ElbAwsAccessBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": { "Ref": "ElbLogBucket" },
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Action": "s3:PutObject",
+              "Effect": "Allow",
+              "Resource": { "Fn::Join": [ "", [ { "Fn::GetAtt": [ "ElbLogBucket", "Arn" ] }, "/*" ] ] },
+              "Principal": {
+                "AWS": [
+                  { "Fn::FindInMap": [ "regionMap", { "Ref": "AWS::Region" }, "ElbAccountId" ] }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  },
+  "Outputs": {
+    "OutputElbLogKeyArn": {
+      "Description": "The key arn for the kms key for the elb log bucket",
+      "Value": { "Fn::GetAtt": [ "ElbLogKmsKey", "Arn" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ElbLogKmsKey-Arn" }
+      }
+    },
+    "OutputElbLogKeyId": {
+      "Description": "The key id for the kms key for the elb log bucket",
+      "Value": { "Ref": "ElbLogKmsKey" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ElbLogKmsKey-Id" }
+      }
+    },
+    "OutputElbLogBucketName": {
+      "Description": "The bucket name for the elb log bucket",
+      "Value": { "Ref": "ElbLogBucket" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ElbLogBucket-Name" }
+      }
+    },
+    "OutputElbLogBucketArn": {
+      "Description": "The arn of the elb log bucket",
+      "Value": { "Fn::GetAtt": [ "ElbLogBucket", "Arn" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ElbLogBucket-Arn" }
+      }
+    }
+  }
+}

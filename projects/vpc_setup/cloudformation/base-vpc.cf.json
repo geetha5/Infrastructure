@@ -1,0 +1,662 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "Base VPC template",
+  "Parameters": {
+    "vpcCidr": {
+      "Type": "String",
+      "Description": "The CIDR of the VPC"
+    },
+    "vpcId": {
+      "Type": "String",
+      "Description": "The ID of the VPC"
+    },
+    "publicSubnetACidr": {
+      "Type": "String",
+      "Description": "The desired CIDR of public subnet A"
+    },
+    "publicSubnetBCidr": {
+      "Type": "String",
+      "Description": "The desired CIDR of public subnet B"
+    },
+    "privateSubnetACidr": {
+      "Type": "String",
+      "Description": "The desired CIDR of private subnet A"
+    },
+    "privateSubnetBCidr": {
+      "Type": "String",
+      "Description": "The desired CIDR of private subnet B"
+    },
+    "availabilityZoneA": {
+      "Type": "String",
+      "Description": "The desired availability zone A"
+    },
+    "availabilityZoneB": {
+      "Type": "String",
+      "Description": "The desired availability zone B"
+    },
+    "vpgId": {
+      "Type": "String",
+      "Description": "The Virtual Private Gateway ID"
+    },
+    "coreServicesVpcPeerId": {
+      "Type": "String",
+      "Description": "The Peer ID for the core services VPC peer"
+    },
+    "coreServicesVpcCidr": {
+      "Type": "String",
+      "Description": "The CIDR of the core services VPC"
+    },
+    "flowLogGroupName": {
+      "Type": "String",
+      "Description": "The log group name for the VPC Flow Logs"
+    },
+    "flowLogRetention": {
+      "Type": "Number",
+      "Description": "The retention period in days for flow log retention",
+      "Default": "731"
+    },
+    "accountName": {
+      "Type": "String",
+      "Description": "This is the name of the account"
+    },
+    "createDevopsSns": {
+      "Type": "String",
+      "Description": "To enable SNS topics for devops notifications",
+      "AllowedValues": [
+        "yes",
+        "no"
+      ]
+    }
+  },
+  "Conditions": {
+    "CreateDevopsSns": { "Fn::Equals": [ { "Ref": "createDevopsSns" }, "yes" ] }
+  },
+  "Resources": {
+    "PrivateSubnetA": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "AvailabilityZone": { "Ref": "availabilityZoneA" },
+        "CidrBlock": { "Ref": "privateSubnetACidr" },
+        "VpcId": { "Ref": "vpcId" },
+        "Tags": [
+          { "Key": "Name", "Value": { "Fn::Join": [ "-", [ "Private-Subnet", { "Fn::Select": [ "2",
+            { "Fn::Split": [ "-", { "Ref": "availabilityZoneA" } ] } ] } ] ] } }
+        ]
+      }
+    },
+    "PrivateSubnetB": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "AvailabilityZone": { "Ref": "availabilityZoneB" },
+        "CidrBlock": { "Ref": "privateSubnetBCidr" },
+        "VpcId": { "Ref": "vpcId" },
+        "Tags": [
+          { "Key": "Name", "Value": { "Fn::Join": [ "-", [ "Private-Subnet", { "Fn::Select": [ "2",
+            { "Fn::Split": [ "-", { "Ref": "availabilityZoneB" } ] } ] } ] ] } }
+        ]
+      }
+    },
+    "PublicSubnetA": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "AvailabilityZone": { "Ref": "availabilityZoneA" },
+        "CidrBlock": { "Ref": "publicSubnetACidr" },
+        "MapPublicIpOnLaunch": true,
+        "VpcId": { "Ref": "vpcId" },
+        "Tags": [
+          { "Key": "Name", "Value": { "Fn::Join": [ "-", [ "Public-Subnet", { "Fn::Select": [ "2",
+            { "Fn::Split": [ "-", { "Ref": "availabilityZoneA" } ] } ] } ] ] } }
+        ]
+      }
+    },
+    "PublicSubnetB": {
+      "Type": "AWS::EC2::Subnet",
+      "Properties": {
+        "AvailabilityZone": { "Ref": "availabilityZoneB" },
+        "CidrBlock": { "Ref": "publicSubnetBCidr" },
+        "MapPublicIpOnLaunch": true,
+        "VpcId": { "Ref": "vpcId" },
+        "Tags": [
+          { "Key": "Name", "Value": { "Fn::Join": [ "-", [ "Public-Subnet", { "Fn::Select": [ "2",
+            { "Fn::Split": [ "-", { "Ref": "availabilityZoneB" } ] } ] } ] ] } }
+        ]
+      }
+    },
+    "InternetGateway": {
+      "Type": "AWS::EC2::InternetGateway",
+      "Properties": {
+      }
+    },
+    "InternetGatewayVPCAttachment": {
+      "Type": "AWS::EC2::VPCGatewayAttachment",
+      "Properties": {
+        "InternetGatewayId": { "Ref": "InternetGateway" },
+        "VpcId": { "Ref": "vpcId" }
+      }
+    },
+    "NatGatewayEipA": {
+      "Type": "AWS::EC2::EIP",
+      "Properties": {
+        "Domain": "vpc"
+      },
+      "DeletionPolicy": "Retain"
+    },
+    "NatGatewayEipB": {
+      "Type": "AWS::EC2::EIP",
+      "Properties": {
+        "Domain": "vpc"
+      },
+      "DeletionPolicy": "Retain"
+    },
+    "NatGatewayA": {
+      "Type": "AWS::EC2::NatGateway",
+      "Properties": {
+        "AllocationId": { "Fn::GetAtt": [ "NatGatewayEipA", "AllocationId" ] },
+        "SubnetId": { "Ref": "PublicSubnetA" },
+        "Tags": [
+          { "Key": "Name", "Value": { "Fn::Join": [ "-", [ "NAT-Gateway", { "Fn::Select": [ "2",
+            { "Fn::Split": [ "-", { "Ref": "availabilityZoneA" } ] } ] } ] ] } }
+        ]
+      }
+    },
+    "NatGatewayB": {
+      "Type": "AWS::EC2::NatGateway",
+      "Properties": {
+        "AllocationId": { "Fn::GetAtt": [ "NatGatewayEipB", "AllocationId" ] },
+        "SubnetId": { "Ref": "PublicSubnetB" },
+        "Tags": [
+          { "Key": "Name", "Value": { "Fn::Join": [ "-", [ "NAT-Gateway", { "Fn::Select": [ "2",
+            { "Fn::Split": [ "-", { "Ref": "availabilityZoneB" } ] } ] } ] ] } }
+        ]
+      }
+    },
+    "PrivateRouteTableA": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": { "Ref": "vpcId" },
+        "Tags": [
+          { "Key": "Name", "Value": { "Fn::Join": [ "-", [ "Private-RTB", { "Fn::Select": [ "2",
+            { "Fn::Split": [ "-", { "Ref": "availabilityZoneA" } ] } ] } ] ] } }
+        ]
+      }
+    },
+    "PrivateRouteTableB": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": { "Ref": "vpcId" },
+        "Tags": [
+          { "Key": "Name", "Value": { "Fn::Join": [ "-", [ "Private-RTB", { "Fn::Select": [ "2",
+            { "Fn::Split": [ "-", { "Ref": "availabilityZoneB" } ] } ] } ] ] } }
+        ]
+      }
+    },
+    "PublicRouteTable": {
+      "Type": "AWS::EC2::RouteTable",
+      "Properties": {
+        "VpcId": { "Ref": "vpcId" },
+        "Tags": [
+          { "Key": "Name", "Value": "Public-RTB" }
+        ]
+      }
+    },
+    "PrivateExternalRouteA": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "NatGatewayId": { "Ref": "NatGatewayA" },
+        "RouteTableId": { "Ref": "PrivateRouteTableA" }
+      }
+    },
+    "PrivateExternalRouteB": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "NatGatewayId": { "Ref": "NatGatewayB" },
+        "RouteTableId": { "Ref": "PrivateRouteTableB" }
+      }
+    },
+    "PublicExternalRoute": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": { "Ref": "InternetGateway" },
+        "RouteTableId": { "Ref": "PublicRouteTable" }
+      }
+    },
+    "ApaVpnRoutePrivateA": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "DestinationCidrBlock": "172.16.0.0/13",
+        "GatewayId": { "Ref": "vpgId" },
+        "RouteTableId": { "Ref": "PrivateRouteTableA" }
+      }
+    },
+    "ApaVpnRoutePrivateB": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "DestinationCidrBlock": "172.16.0.0/13",
+        "GatewayId": { "Ref": "vpgId" },
+        "RouteTableId": { "Ref": "PrivateRouteTableB" }
+      }
+    },
+    "PwmVpnRoute78PrivateA": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "DestinationCidrBlock": "10.78.0.0/16",
+        "GatewayId": { "Ref": "vpgId" },
+        "RouteTableId": { "Ref": "PrivateRouteTableA" }
+      }
+    },
+    "PwmVpnRoute79PrivateA": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "DestinationCidrBlock": "10.79.0.0/16",
+        "GatewayId": { "Ref": "vpgId" },
+        "RouteTableId": { "Ref": "PrivateRouteTableA" }
+      }
+    },
+    "PwmVpnRoute78PrivateB": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "DestinationCidrBlock": "10.78.0.0/16",
+        "GatewayId": { "Ref": "vpgId" },
+        "RouteTableId": { "Ref": "PrivateRouteTableB" }
+      }
+    },
+    "PwmVpnRoute79PrivateB": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "DestinationCidrBlock": "10.79.0.0/16",
+        "GatewayId": { "Ref": "vpgId" },
+        "RouteTableId": { "Ref": "PrivateRouteTableB" }
+      }
+    },
+    "CoreServicesPeerRoutePrivateA": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "DestinationCidrBlock": { "Ref": "coreServicesVpcCidr" },
+        "VpcPeeringConnectionId": { "Ref": "coreServicesVpcPeerId" },
+        "RouteTableId": { "Ref": "PrivateRouteTableA" }
+      }
+    },
+    "CoreServicesPeerRoutePrivateB": {
+      "Type": "AWS::EC2::Route",
+      "Properties": {
+        "DestinationCidrBlock": { "Ref": "coreServicesVpcCidr" },
+        "VpcPeeringConnectionId": { "Ref": "coreServicesVpcPeerId" },
+        "RouteTableId": { "Ref": "PrivateRouteTableB" }
+      }
+    },
+    "PublicARouteTableAssoc": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": { "Ref": "PublicRouteTable" },
+        "SubnetId": { "Ref": "PublicSubnetA" }
+      }
+    },
+    "PublicBRouteTableAssoc": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": { "Ref": "PublicRouteTable" },
+        "SubnetId": { "Ref": "PublicSubnetB" }
+      }
+    },
+    "PrivateARouteTableAssoc": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": { "Ref": "PrivateRouteTableA" },
+        "SubnetId": { "Ref": "PrivateSubnetA" }
+      }
+    },
+    "PrivateBRouteTableAssoc": {
+      "Type": "AWS::EC2::SubnetRouteTableAssociation",
+      "Properties": {
+        "RouteTableId": { "Ref": "PrivateRouteTableB" },
+        "SubnetId": { "Ref": "PrivateSubnetB" }
+      }
+    },
+    "VpcFlowlogRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": {
+              "Service": [ "vpc-flow-logs.amazonaws.com" ]
+            },
+            "Action": "sts:AssumeRole"
+          }]
+        },
+        "Path": "/",
+        "Policies": [
+          {
+            "PolicyName": "flowlogs-policy",
+            "PolicyDocument": {
+              "Version": "2012-10-17",
+              "Statement": [
+                {
+                  "Effect": "Allow",
+                  "Action": [
+                    "logs:CreateLogGroup",
+                    "logs:CreateLogStream",
+                    "logs:DescribeLogGroups",
+                    "logs:DescribeLogStreams",
+                    "logs:PutLogEvents"
+                  ],
+                  "Resource": "*"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    "VpcFlowLogGroup": {
+      "Type": "AWS::Logs::LogGroup",
+      "Properties": {
+        "LogGroupName": { "Ref": "flowLogGroupName" },
+        "RetentionInDays": { "Ref": "flowLogRetention" }
+      }
+    },
+    "VpcFlowLog": {
+      "Type": "AWS::EC2::FlowLog",
+      "Properties": {
+        "DeliverLogsPermissionArn": { "Fn::GetAtt": [ "VpcFlowlogRole", "Arn" ] },
+        "LogGroupName": { "Ref": "flowLogGroupName" },
+        "ResourceId": { "Ref": "vpcId" },
+        "ResourceType": "VPC",
+        "TrafficType": "ALL"
+      }
+    },
+    "ParameterStoreKmsKey": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "Description": "VPC ParameterStore KMS key",
+        "Enabled": true,
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Id": { "Fn::Join": [ "-", [ { "Ref": "accountName" }, { "Ref": "AWS::Region" },
+            "parameter-store-kms-key" ] ] },
+          "Statement": [
+            {
+              "Sid": "Enable IAM User Permissions",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": { "Fn::Join": [ "", [ "arn:aws:iam::", { "Ref": "AWS::AccountId" }, ":root" ] ] } },
+              "Action": "kms:*",
+              "Resource": "*"
+            }
+          ]
+        }
+      },
+      "DeletionPolicy": "Retain"
+    },
+    "ParameterStoreKmsKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": { "Fn::Join": [ "", [ "alias/", { "Ref": "accountName" }, "-", { "Ref": "AWS::Region" },
+          "-", "parameter-store-kms-key" ] ] },
+        "TargetKeyId": { "Ref": "ParameterStoreKmsKey" }
+      }
+    },
+    "S3KmsKey": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "Description": "VPC S3 KMS Key",
+        "Enabled": true,
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Id": { "Fn::Join": [ "-", [ { "Ref": "accountName" }, { "Ref": "AWS::Region" }, "s3-kms-key" ] ] },
+          "Statement": [
+            {
+              "Sid": "Enable IAM User Permissions",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": { "Fn::Join": [ "", [ "arn:aws:iam::", { "Ref": "AWS::AccountId" }, ":root" ] ] } },
+              "Action": "kms:*",
+              "Resource": "*"
+            }
+          ]
+        }
+      },
+      "DeletionPolicy": "Retain"
+    },
+    "S3KmsKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": { "Fn::Join": [ "", [ "alias/", { "Ref": "accountName" }, "-", { "Ref": "AWS::Region" },
+          "-", "s3-kms-key" ] ] },
+        "TargetKeyId": { "Ref": "S3KmsKey" }
+      }
+    },
+    "RdsKmsKey": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "Description": "VPC RDS KMS Key",
+        "Enabled": true,
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Id": { "Fn::Join": [ "-", [ { "Ref": "accountName" }, { "Ref": "AWS::Region" }, "rds-kms-key" ] ] },
+          "Statement": [
+            {
+              "Sid": "Enable IAM User Permissions",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": { "Fn::Join": [ "", [ "arn:aws:iam::", { "Ref": "AWS::AccountId" }, ":root" ] ] } },
+              "Action": "kms:*",
+              "Resource": "*"
+            }
+          ]
+        }
+      },
+      "DeletionPolicy": "Retain"
+    },
+    "RdsKmsKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": { "Fn::Join": [ "", [ "alias/", { "Ref": "accountName" }, "-", { "Ref": "AWS::Region" },
+          "-", "rds-kms-key" ] ] },
+        "TargetKeyId": { "Ref": "RdsKmsKey" }
+      }
+    },
+    "Ec2KmsKey": {
+      "Type": "AWS::KMS::Key",
+      "Properties": {
+        "Description": "VPC EC2 KMS Key",
+        "Enabled": true,
+        "EnableKeyRotation": true,
+        "KeyPolicy": {
+          "Version": "2012-10-17",
+          "Id": { "Fn::Join": [ "-", [ { "Ref": "accountName" }, { "Ref": "AWS::Region" }, "ec2-kms-key" ] ] },
+          "Statement": [
+            {
+              "Sid": "Enable IAM User Permissions",
+              "Effect": "Allow",
+              "Principal": {
+                "AWS": { "Fn::Join": [ "", [ "arn:aws:iam::", { "Ref": "AWS::AccountId" }, ":root" ] ] } },
+              "Action": "kms:*",
+              "Resource": "*"
+            }
+          ]
+        }
+      }
+    },
+    "Ec2KmsKeyAlias": {
+      "Type": "AWS::KMS::Alias",
+      "Properties": {
+        "AliasName": { "Fn::Join": [ "", [ "alias/", { "Ref": "accountName" }, "-", { "Ref": "AWS::Region" },
+          "-", "ec2-kms-key" ] ] },
+        "TargetKeyId": { "Ref": "Ec2KmsKey" }
+      }
+    },
+    "DevopsAlertSns": {
+      "Type": "AWS::SNS::Topic",
+      "Properties": {
+        "DisplayName": { "Fn::Join": [ "-", [ { "Ref": "accountName" }, { "Ref": "AWS::Region" }, "devops-alert" ] ] }
+      },
+      "Condition": "CreateDevopsSns"
+    }
+  },
+  "Outputs": {
+    "OutputDevopsSnsName": {
+      "Description": "The Name of the DevOps alert SNS topic",
+      "Value": { "Fn::GetAtt": [ "DevopsAlertSns", "TopicName" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-DevopsSns-Name" }
+      },
+      "Condition": "CreateDevopsSns"
+    },
+    "OutputDevopsSnsArn": {
+      "Description": "The Arn of the DevOps alert SNS topic",
+      "Value": { "Ref": "DevopsAlertSns" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-DevopsSns-Arn" }
+      },
+      "Condition": "CreateDevopsSns"
+    },
+    "OutputEc2KmsKeyId": {
+      "Description": "The Id of the EC2 KMS Key",
+      "Value": { "Ref": "Ec2KmsKey" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-Ec2KmsKey-Id" }
+      }
+    },
+    "OutputEc2KmsKeyArn": {
+      "Description": "The Arn of the EC2 KMS Key",
+      "Value": { "Fn::GetAtt": [ "Ec2KmsKey", "Arn" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-Ec2KmsKey-Arn" }
+      }
+    },
+    "OutputParamStoreKmsKeyId": {
+      "Description": "The Id of the Parameter Store KMS key",
+      "Value": { "Ref": "ParameterStoreKmsKey" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ParameterStoreKmsKey-Id" }
+      }
+    },
+    "OutputParamStoreKmsKeyArn": {
+      "Description": "The Arn of the Parameter Store KMS key",
+      "Value": { "Fn::GetAtt": [ "ParameterStoreKmsKey", "Arn" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-ParameterStoreKmsKey-Arn" }
+      }
+    },
+    "OutputS3eKmsKeyId": {
+      "Description": "The Id of the S3 KMS key",
+      "Value": { "Ref": "S3KmsKey" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-S3KmsKey-Id" }
+      }
+    },
+    "OutputS3KmsKeyArn": {
+      "Description": "The Arn of the S3 KMS key",
+      "Value": { "Fn::GetAtt": [ "S3KmsKey", "Arn" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-S3KmsKey-Arn" }
+      }
+    },
+    "OutputRdsKmsKeyId": {
+      "Description": "The Id of the RDS KMS key",
+      "Value": { "Ref": "RdsKmsKey" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-RdsKmsKey-Id" }
+      }
+    },
+    "OutputRdsKmsKeyArn": {
+      "Description": "The Arn of the RDS KMS key",
+      "Value": { "Fn::GetAtt": [ "RdsKmsKey", "Arn" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-RdsKmsKey-Arn" }
+      }
+    },
+    "OutputFlowLogGroupArn": {
+      "Description": "The Arn of the Log",
+      "Value": { "Fn::GetAtt": [ "VpcFlowLogGroup", "Arn" ] },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-FlowLogGroup-Arn" }
+      }
+    },
+    "OutputPrivateSubnetAId": {
+      "Description": "The ID of private subnet A",
+      "Value": { "Ref": "PrivateSubnetA" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-PrivateSubnetA-Id" }
+      }
+    },
+    "OutputPrivateSubnetACidr": {
+      "Description": "The CIDR of private subnet A",
+      "Value": { "Ref": "privateSubnetACidr" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-PrivateSubnetA-Cidr" }
+      }
+    },
+    "OutputPrivateSubnetBId": {
+      "Description": "The ID of private subnet B",
+      "Value": { "Ref": "PrivateSubnetB" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-PrivateSubnetB-Id" }
+      }
+    },
+    "OutputPrivateSubnetBCidr": {
+      "Description": "The CIDR of private subnet B",
+      "Value": { "Ref": "privateSubnetBCidr" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-PrivateSubnetB-Cidr" }
+      }
+    },
+    "OutputPublicSubnetAId": {
+      "Description": "The ID of public subnet A",
+      "Value": { "Ref": "PublicSubnetA" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-PublicSubnetA-Id" }
+      }
+    },
+    "OutputPublicSubnetACidr": {
+      "Description": "The CIDR of public subnet A",
+      "Value": { "Ref": "publicSubnetACidr" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-PublicSubnetA-Cidr" }
+      }
+    },
+    "OutputSubnetPublicBId": {
+      "Description": "The ID of public subnet B",
+      "Value": { "Ref": "PublicSubnetB" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-PublicSubnetB-Id" }
+      }
+    },
+    "OutputSubnetPublicBCidr": {
+      "Description": "The CIDR of public subnet B",
+      "Value": { "Ref": "publicSubnetBCidr" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-PublicSubnetB-Cidr" }
+      }
+    },
+    "OutputVpcId": {
+      "Description": "The ID of the VPC",
+      "Value": { "Ref": "vpcId" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-Vpc-Id" }
+      }
+    },
+    "OutputVpcCidr": {
+      "Description": "The CIDR of the VPC",
+      "Value": { "Ref": "vpcCidr" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-Vpc-Cidr" }
+      }
+    },
+    "OutputCoreServicesVpcCidr": {
+      "Description": "The CIDR of Core Services VPC",
+      "Value": { "Ref": "coreServicesVpcCidr" },
+      "Export": {
+        "Name": { "Fn::Sub": "${AWS::StackName}-CoreServices-Cidr" }
+      }
+    }
+  }
+}
